@@ -6,3 +6,6 @@ GET:/echo-name.php:name
 GET:/ping.php:host
 GET:/echo-name-surname.php:name,surname
 GET:/ping.php:host
+GET:/find-escapeshellcmd.php:input
+GET:/ping-no-amp.php:host
+GET:/ping-no-semicol.php:host

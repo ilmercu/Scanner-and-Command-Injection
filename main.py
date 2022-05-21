@@ -31,7 +31,10 @@ def elaborate_response(url_under_test, parameter_under_test, parameter_under_tes
         if url_under_test in response.text:
             vulnerable = True
     elif 'cat /etc/passwd' in parameter_under_test_value:
-        if 'root'in response.text:
+        if 'root' in response.text:
+            vulnerable = True
+    elif ('head' in parameter_under_test_value or 'grep php' in parameter_under_test_value) and '.php' in parameter_under_test_value:
+        if '<?php' in response.text:
             vulnerable = True
 
     if vulnerable:
@@ -94,5 +97,5 @@ def main():
 
     send_request(requestsDict)
 
-if __name__== '__main__':
+if __name__ == '__main__':
     main()

@@ -6,3 +6,6 @@
 ;ls -la
 ;ls~;whoami
 ;ls
+ping.php -exec whoami ;
+;head ping.php
+;grep php echo.php
