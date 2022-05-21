@@ -3,3 +3,5 @@
 ;whoami
 ;ls -la
 <script>alert('test');</script>
+;ls -la
+;ls~;whoami

@@ -3,3 +3,5 @@ GET:/ping.php:host
 POST:/ping-post.php:host
 GET:/ping-escapeshellcmd.php:host
 GET:/echo-name.php:name
+GET:/ping.php:host
+GET:/echo-name-surname.php:name,surname

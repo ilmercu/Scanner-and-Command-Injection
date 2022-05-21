@@ -1,13 +1,16 @@
 from config import *
 import requests
 
-def elaborate_response(response):
+def elaborate_response(parameter_under_test, response):
     if DEBUG:
         print('\n[DEBUG] - URL')
-        print(f'{response.url}')
+        print(response.url)
+
+        print('[DEBUG] - PARAMETER UNDER TEST')
+        print(parameter_under_test)
         
-        print('[DEBUG] - REQUEST RESULT')
-        print(f'{response.text}')
+        print('[DEBUG] - RESPONSE')
+        print(response.text)
 
 # read requests details
 def read_requests_details(requestsDict):
@@ -39,16 +42,21 @@ def send_request(requestsDict):
         
         for payload in request['payloads']:
             data = { }
-
-            for parameter in request['parameters']:
-                data[parameter] = payload
             
-            if 'GET' == request['method'].upper():
-                elaborate_response(requests.get(final_url, params=data))
-            elif 'POST' == request['method'].upper():
-                elaborate_response(requests.post(final_url, data=data))
-            else:
-                print(f'Method {request["method"]} is not supported')
+            # test all payloads combinations
+            for i in range(0, len(request['parameters'])):
+                for j in range(0, len(request['parameters'])):
+                    if j == i:
+                        data[request['parameters'][i]] = payload
+                    else:
+                        data[request['parameters'][j]] = 'valid_string' # valid value for input type
+            
+                if 'GET' == request['method'].upper():
+                    elaborate_response(request['parameters'][i], requests.get(final_url, params=data))
+                elif 'POST' == request['method'].upper():
+                    elaborate_response(request['parameters'][i], requests.post(final_url, data=data))
+                else:
+                    print(f'Method {request["method"]} is not supported')        
 
 def main():
     requestsDict = [ ]
