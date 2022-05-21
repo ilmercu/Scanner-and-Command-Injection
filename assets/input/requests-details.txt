@@ -5,3 +5,4 @@ GET:/ping-escapeshellcmd.php:host
 GET:/echo-name.php:name
 GET:/ping.php:host
 GET:/echo-name-surname.php:name,surname
+GET:/ping.php:host

@@ -26,13 +26,17 @@ def elaborate_response(url_under_test, parameter_under_test, parameter_under_tes
 
     vulnerable = False
 
+    # check expected results
     if 'ls' in parameter_under_test_value:
         if url_under_test in response.text:
+            vulnerable = True
+    elif 'cat /etc/passwd' in parameter_under_test_value:
+        if 'root'in response.text:
             vulnerable = True
 
     if vulnerable:
         print(f'Found a command injection for URL: {url_under_test}, parameter: {parameter_under_test}, payload: {parameter_under_test_value}')
-        write_vulnerabilty_report(f'{datetime.now()} - Found a command injection for URL: {url_under_test}, parameter: {parameter_under_test}, payload: {parameter_under_test_value}')
+        write_vulnerabilty_report(f'\n{datetime.now()} - Found a command injection for URL: {url_under_test}, parameter: {parameter_under_test}, payload: {parameter_under_test_value}')
 
 # read requests details
 def read_requests_details(requestsDict):
@@ -90,5 +94,5 @@ def main():
 
     send_request(requestsDict)
 
-if __name__=="__main__":
+if __name__== '__main__':
     main()

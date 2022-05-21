@@ -5,3 +5,4 @@
 <script>alert('test');</script>
 ;ls -la
 ;ls~;whoami
+;ls
