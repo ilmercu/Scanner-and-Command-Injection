@@ -12,11 +12,12 @@ def write_vulnerabilty_report(message):
     with open(VULNERABILITY_OUTPUT_PATH, 'a+') as f:
         f.write(message)
 
-def elaborate_response(url_under_test, parameter_under_test, parameter_under_test_value, response):
+def elaborate_response(http_method, url_under_test, parameter_under_test, parameter_under_test_value, response):
     url_under_test = url_under_test[1:] # remove initial slash
 
     if DEBUG:
         print(f'\n[DEBUG] - URL: {url_under_test}')
+        print(f'\n[DEBUG] - HTTP METHOD: {http_method}')
         print(f'[DEBUG] - COMPLETE URL: {response.url}')
         print(f'[DEBUG] - PARAMETER UNDER TEST: {parameter_under_test}')
         print(f'[DEBUG] - PARAMETER UNDER TEST VALUE: {parameter_under_test_value}')
@@ -44,8 +45,8 @@ def elaborate_response(url_under_test, parameter_under_test, parameter_under_tes
             vulnerable = True
 
     if vulnerable:
-        print(f'Found a command injection for URL: {url_under_test}, parameter: {parameter_under_test}, payload: {parameter_under_test_value}')
-        write_vulnerabilty_report(f'\n{datetime.now()} - Found a command injection for URL: {url_under_test}, parameter: {parameter_under_test}, payload: {parameter_under_test_value}')
+        print(f'Found a command injection for URL: {url_under_test}, HTTP method: {http_method}, parameter: {parameter_under_test}, payload: {parameter_under_test_value}')
+        write_vulnerabilty_report(f'\n{datetime.now()} - Found a command injection for URL: {url_under_test}, HTTP method: {http_method}, parameter: {parameter_under_test}, payload: {parameter_under_test_value}')
 
 # read requests details
 def read_requests_details(requestsDict):
@@ -60,17 +61,17 @@ def read_requests_details(requestsDict):
             })
 
 # read payloads to inject
-def read_payloads(requestsDict):
+def read_payloads(requests_dict):
     with open(PAYLOADS_INPUT_PATH) as f:
         i = 0
 
         for line in f:
             payloads = line.strip().split(PAYLOADS_SPLIT_VAL)
-            requestsDict[i]['payloads'] = payloads
+            requests_dict[i]['payloads'] = payloads
             i += 1
 
-def send_request(requestsDict):
-    for request in requestsDict:
+def send_request(requests_dict):
+    for request in requests_dict:
         final_url = TARGET + request['url']
         
         for payload in request['payloads']:
@@ -85,23 +86,23 @@ def send_request(requestsDict):
                         data[request['parameters'][j]] = 'valid_string' # valid value for input type
             
                 if 'GET' == request['method'].upper():
-                    elaborate_response(request['url'], request['parameters'][i], payload, requests.get(final_url, params=data))
+                    elaborate_response(request['method'], request['url'], request['parameters'][i], payload, requests.get(final_url, params=data))
                 elif 'POST' == request['method'].upper():
-                    elaborate_response(request['url'], request['parameters'][i], payload, requests.post(final_url, data=data))
+                    elaborate_response(request['method'], request['url'], request['parameters'][i], payload, requests.post(final_url, data=data))
                 else:
                     print(f'Method {request["method"]} is not supported')        
 
 def main():
-    requestsDict = [ ]
+    requests_dict = [ ]
 
-    read_requests_details(requestsDict)
-    read_payloads(requestsDict)
+    read_requests_details(requests_dict)
+    read_payloads(requests_dict)
 
     if DEBUG:
         print('[DEBUG] - REQUESTS DICTIONARY')
-        print(requestsDict)
+        print(requests_dict)
 
-    send_request(requestsDict)
+    send_request(requests_dict)
 
 if __name__ == '__main__':
     main()
