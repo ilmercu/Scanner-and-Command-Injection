@@ -1,16 +1,24 @@
 from config import *
 import requests
+import os
+from datetime import datetime
+
+def write_vulnerabilty_report(message):
+    directories, filename = os.path.split(VULNERABILITY_OUTPUT_PATH)
+
+    if not os.path.exists(directories):
+        os.makedirs(directories)
+
+    with open(VULNERABILITY_OUTPUT_PATH, 'a+') as f:
+        f.write(message)
 
 def elaborate_response(url_under_test, parameter_under_test, parameter_under_test_value, response):
     url_under_test = url_under_test[1:] # remove initial slash
 
     if DEBUG:
         print(f'\n[DEBUG] - URL: {url_under_test}')
-
         print(f'[DEBUG] - COMPLETE URL: {response.url}')
-
         print(f'[DEBUG] - PARAMETER UNDER TEST: {parameter_under_test}')
-
         print(f'[DEBUG] - PARAMETER UNDER TEST VALUE: {parameter_under_test_value}')
         
         print('[DEBUG] - RESPONSE')
@@ -23,7 +31,8 @@ def elaborate_response(url_under_test, parameter_under_test, parameter_under_tes
             vulnerable = True
 
     if vulnerable:
-        print(f'Found a command injection for parameter: {parameter_under_test}, URL: {url_under_test}, payload: {parameter_under_test_value}')
+        print(f'Found a command injection for URL: {url_under_test}, parameter: {parameter_under_test}, payload: {parameter_under_test_value}')
+        write_vulnerabilty_report(f'{datetime.now()} - Found a command injection for URL: {url_under_test}, parameter: {parameter_under_test}, payload: {parameter_under_test_value}')
 
 # read requests details
 def read_requests_details(requestsDict):
@@ -44,9 +53,7 @@ def read_payloads(requestsDict):
 
         for line in f:
             payloads = line.strip().split(PAYLOADS_SPLIT_VAL)
-            
             requestsDict[i]['payloads'] = payloads
-
             i += 1
 
 def send_request(requestsDict):
