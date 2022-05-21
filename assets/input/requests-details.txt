@@ -1,0 +1,2 @@
+GET:/echo-name.php:name
+GET:/ping.php:host

@@ -1,0 +1,3 @@
+*.gz
+run_example.txt
+__pycache__
