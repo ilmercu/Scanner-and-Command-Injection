@@ -6,8 +6,12 @@ The idea of this vulnerability scanner and command injection is to show some exa
 The scanner won't work on every environment, injections are based on linux commands.
 
 ## Requirements
+### Languages
 + Python (for application code)
 + PHP (for vulnerable server code)
+
+### Libraries
++ requests
 
 ## Input files
 + assets/input/requests-details.txt<br>
