@@ -30,20 +30,38 @@ if DEBUG:
     print(requestsDict)
 
 for request in requestsDict:
-    final_url = TARGET + request['url'] + '?'
+    final_url = TARGET + request['url']
     
     for payload in request['payloads']:
-        payload_injection = ''
+        if 'GET' == request['method'].upper():
+            payload_injection = ''
 
-        for parameter in request['parameters']:
-            payload_injection += parameter + '=' + payload
-        
-        if DEBUG:
-            print('\n[DEBUG] - URL')
-            print(f'{final_url}{payload_injection}')
-        
-        r = requests.get(final_url + payload_injection)
+            for parameter in request['parameters']:
+                payload_injection += parameter + '=' + payload
+            
+            if DEBUG:
+                print('\n[DEBUG] - URL - GET METHOD')
+                print(f'{final_url}?{payload_injection}')
+            
+            r = requests.get(final_url + '?' + payload_injection)
 
-        if DEBUG:
-            print('[DEBUG] - REQUEST RESULT')
-            print(f'{r.text}')
+            if DEBUG:
+                print('[DEBUG] - REQUEST RESULT')
+                print(f'{r.text}')
+        elif 'POST' == request['method'].upper():
+            post_data = { }
+
+            for parameter in request['parameters']:
+                post_data[parameter] = payload
+            
+            if DEBUG:
+                print('\n[DEBUG] - URL - POST METHOD')
+                print(f'{final_url}')
+            
+            r = requests.post(final_url, data=post_data)
+
+            if DEBUG:
+                print('[DEBUG] - REQUEST RESULT')
+                print(f'{r.text}')
+        else:
+            print(f'Method {request["method"]} is not supported')

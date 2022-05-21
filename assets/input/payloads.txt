@@ -1,2 +1,4 @@
 ;ls~;whoami
 ;cat /etc/passwd
+;whoami
+;ls -la
