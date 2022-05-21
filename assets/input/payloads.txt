@@ -2,3 +2,4 @@
 ;cat /etc/passwd
 ;whoami
 ;ls -la
+<script>alert('test');</script>
