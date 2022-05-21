@@ -36,6 +36,12 @@ def elaborate_response(url_under_test, parameter_under_test, parameter_under_tes
     elif ('head' in parameter_under_test_value or 'grep php' in parameter_under_test_value) and '.php' in parameter_under_test_value:
         if '<?php' in response.text:
             vulnerable = True
+    elif 'whoami' in parameter_under_test_value:
+        if CURRENT_USER in response.text:
+            vulnerable = True
+    elif 'ifconfig | grep inet' in parameter_under_test_value:
+        if 'inet' in response.text:
+            vulnerable = True
 
     if vulnerable:
         print(f'Found a command injection for URL: {url_under_test}, parameter: {parameter_under_test}, payload: {parameter_under_test_value}')

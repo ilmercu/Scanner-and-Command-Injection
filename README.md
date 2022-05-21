@@ -31,6 +31,8 @@ PAYLOADS_INPUT_PATH = 'assets/input/payloads.txt' # commands list path
 REQUESTS_SPLIT_VAL = ':' # split char for requests
 REQUESTS_PARAMETERS_SPLIT_VAL = ',' # split char for parameters in requests
 PAYLOADS_SPLIT_VAL = '~' # split char for commands values
+
+CURRENT_USER = 'andre' # known user used for whoami test
 ```
 
 ## Code explanation
