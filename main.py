@@ -1,16 +1,29 @@
 from config import *
 import requests
 
-def elaborate_response(parameter_under_test, response):
-    if DEBUG:
-        print('\n[DEBUG] - URL')
-        print(response.url)
+def elaborate_response(url_under_test, parameter_under_test, parameter_under_test_value, response):
+    url_under_test = url_under_test[1:] # remove initial slash
 
-        print('[DEBUG] - PARAMETER UNDER TEST')
-        print(parameter_under_test)
+    if DEBUG:
+        print(f'\n[DEBUG] - URL: {url_under_test}')
+
+        print(f'[DEBUG] - COMPLETE URL: {response.url}')
+
+        print(f'[DEBUG] - PARAMETER UNDER TEST: {parameter_under_test}')
+
+        print(f'[DEBUG] - PARAMETER UNDER TEST VALUE: {parameter_under_test_value}')
         
         print('[DEBUG] - RESPONSE')
         print(response.text)
+
+    vulnerable = False
+
+    if 'ls' in parameter_under_test_value:
+        if url_under_test in response.text:
+            vulnerable = True
+
+    if vulnerable:
+        print(f'Found a command injection for parameter: {parameter_under_test}, URL: {url_under_test}, payload: {parameter_under_test_value}')
 
 # read requests details
 def read_requests_details(requestsDict):
@@ -52,9 +65,9 @@ def send_request(requestsDict):
                         data[request['parameters'][j]] = 'valid_string' # valid value for input type
             
                 if 'GET' == request['method'].upper():
-                    elaborate_response(request['parameters'][i], requests.get(final_url, params=data))
+                    elaborate_response(request['url'], request['parameters'][i], payload, requests.get(final_url, params=data))
                 elif 'POST' == request['method'].upper():
-                    elaborate_response(request['parameters'][i], requests.post(final_url, data=data))
+                    elaborate_response(request['url'], request['parameters'][i], payload, requests.post(final_url, data=data))
                 else:
                     print(f'Method {request["method"]} is not supported')        
 
