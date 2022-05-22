@@ -12,7 +12,7 @@ def write_vulnerabilty_report(vulnerabilities_lines):
 
     with open(VULNERABILITY_OUTPUT_PATH, 'a+') as f:
         for message in vulnerabilities_lines:
-            f.write(message)
+            f.write(f'{message}\n')
 
 def elaborate_response(http_method, url_under_test, parameters_and_values, response, vulnerabilities_lines):
     url_under_test = url_under_test[1:] # remove initial slash
