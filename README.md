@@ -13,13 +13,45 @@ The scanner won't work on every environment, injections are based on linux comma
 ### Libraries
 + requests
 
+## Code explanation
+The application code reads input files (created by the user) and send HTTP requests based on the specified method. Commands in payloads file will be injected into each parameter by using permutations. A different request will be sent for each payloads permutation.<br>
+Server response is elaborated in order to check vulnerabilities. This check is based on a simple idea of looking if specific strings are in response body.<br>
+If a vulnerability is found a descriptive line will be written inside the output file. 
+
 ## Input files
 + assets/input/requests-details.txt<br>
-used to specify request details containing HTTP method, resource and parameters under test.<br>
+used to specify the list of requests details containing HTTP method, resource and parameters under test.<br>
 The format used to specify the details is: HTTP method:resource:parameter1,parameter2,..
 + assets/input/payloads.txt<br>
-used to specify the commands that will be used in a specific request (based on files row number). <br>
-The format used to specify commands is: command1~command2~..
+used to specify the list of commands that will be used in a specific request (based on files row number). <br>
+Each command is separated by tilde.
+
+### requests.details.txt example
+```
+GET:/echo-name.php:name
+GET:/ping.php:host
+GET:/ping-escapeshellcmd.php:host
+GET:/find-escapeshellcmd.php:input
+GET:/ping-no-amp.php:host
+GET:/ping-no-semicol.php:host
+GET:/ping-no-pipe.php:host
+GET:/ping-no-space.php:host
+GET:/ping-no-amp.php:host
+```
+
+### payloads.txt example
+```
+;ls~;whoami
+;cat /etc/passwd
+;ls -la
+ping.php -exec whoami ;
+;head ping.php
+;grep php echo.php
+;grep php echo.php
+;ls
+;ifconfig | grep inet
+;cat /etc/passwd
+```
 
 ## Config file
 ```python
@@ -38,11 +70,6 @@ PAYLOADS_SPLIT_VAL = '~' # split char for commands values
 
 CURRENT_USER = 'andre' # known user used for whoami test
 ```
-
-## Code explanation
-The application code reads input files and send HTTP requests based on the specified method. Each command in payloads file will be injected into each parameter separately, which means that only one parameter at time will contain a command, the others will contain a valid value. For each combiantion of (parameter, value) a different request will be sent.<br>
-Server response is elaborated in order to check vulnerabilities. This check is based on a simple idea of looking if specific strings are in response body.<br>
-If a vulnerability is found a descriptive line will be written inside the output file. 
 
 ## Run execution
 ### Server
