@@ -99,7 +99,7 @@ def send_request(requests_dict, vulnerabilities_lines):
             if 'GET' == request['method'].upper():
                 elaborate_response(request['method'], request['url'], data, requests.get(final_url, params=data), vulnerabilities_lines)
             elif 'POST' == request['method'].upper():
-                elaborate_response(request['method'], request['url'], data, payload, requests.post(final_url, data=data), vulnerabilities_lines)
+                elaborate_response(request['method'], request['url'], data, requests.post(final_url, data=data), vulnerabilities_lines)
             else:
                 print(f'Method {request["method"]} is not supported')      
 
