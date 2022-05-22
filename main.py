@@ -2,51 +2,60 @@ from config import *
 import requests
 import os
 from datetime import datetime
+import itertools
 
-def write_vulnerabilty_report(message):
+def write_vulnerabilty_report(vulnerabilities_lines):
     directories, filename = os.path.split(VULNERABILITY_OUTPUT_PATH)
 
     if not os.path.exists(directories):
         os.makedirs(directories)
 
     with open(VULNERABILITY_OUTPUT_PATH, 'a+') as f:
-        f.write(message)
+        for message in vulnerabilities_lines:
+            f.write(message)
 
-def elaborate_response(http_method, url_under_test, parameter_under_test, parameter_under_test_value, response):
+def elaborate_response(http_method, url_under_test, parameters_and_values, response, vulnerabilities_lines):
     url_under_test = url_under_test[1:] # remove initial slash
 
-    if DEBUG:
-        print(f'\n[DEBUG] - URL: {url_under_test}')
-        print(f'\n[DEBUG] - HTTP METHOD: {http_method}')
-        print(f'[DEBUG] - COMPLETE URL: {response.url}')
-        print(f'[DEBUG] - PARAMETER UNDER TEST: {parameter_under_test}')
-        print(f'[DEBUG] - PARAMETER UNDER TEST VALUE: {parameter_under_test_value}')
+    for parameter, value in parameters_and_values.items():
+        message = f'Found a command injection for URL: {url_under_test}, HTTP method: {http_method}, parameter: {parameter}, payload: {value}'
         
-        print('[DEBUG] - RESPONSE')
-        print(response.text)
+        # skip checked combination
+        if message in vulnerabilities_lines:
+            continue
 
-    vulnerable = False
+        if DEBUG:
+            print(f'\n[DEBUG] - URL: {url_under_test}')
+            print(f'[DEBUG] - HTTP METHOD: {http_method}')
+            print(f'[DEBUG] - COMPLETE URL: {response.url}')
+            print(f'[DEBUG] - PARAMETER UNDER TEST: {parameter}')
+            print(f'[DEBUG] - PARAMETER UNDER TEST VALUE: {value}')
+            
+            print('[DEBUG] - RESPONSE')
+            print(response.text)
 
-    # check expected results
-    if 'ls' in parameter_under_test_value:
-        if url_under_test in response.text:
-            vulnerable = True
-    elif 'cat /etc/passwd' in parameter_under_test_value:
-        if 'root' in response.text:
-            vulnerable = True
-    elif ('head' in parameter_under_test_value or 'grep php' in parameter_under_test_value) and '.php' in parameter_under_test_value:
-        if '<?php' in response.text:
-            vulnerable = True
-    elif 'whoami' in parameter_under_test_value:
-        if CURRENT_USER in response.text:
-            vulnerable = True
-    elif 'ifconfig | grep inet' in parameter_under_test_value:
-        if 'inet' in response.text:
-            vulnerable = True
+        vulnerable = False
 
-    if vulnerable:
-        print(f'Found a command injection for URL: {url_under_test}, HTTP method: {http_method}, parameter: {parameter_under_test}, payload: {parameter_under_test_value}')
-        write_vulnerabilty_report(f'\n{datetime.now()} - Found a command injection for URL: {url_under_test}, HTTP method: {http_method}, parameter: {parameter_under_test}, payload: {parameter_under_test_value}')
+        # check expected results
+        if 'ls' in value:
+            if url_under_test in response.text:
+                vulnerable = True
+        elif 'cat /etc/passwd' in value:
+            if 'root' in response.text:
+                vulnerable = True
+        elif ('head' in value or 'grep php' in value) and '.php' in value:
+            if '<?php' in response.text:
+                vulnerable = True
+        elif 'whoami' in value:
+            if CURRENT_USER in response.text:
+                vulnerable = True
+        elif 'ifconfig | grep inet' in value:
+            if 'inet' in response.text:
+                vulnerable = True
+
+        if vulnerable:
+            print(message)
+            vulnerabilities_lines.append(message)
 
 # read requests details
 def read_requests_details(requestsDict):
@@ -73,27 +82,26 @@ def read_payloads(requests_dict):
         if i != len(requests_dict):
             raise IndexError()
 
-def send_request(requests_dict):
+def send_request(requests_dict, vulnerabilities_lines):
     for request in requests_dict:
         final_url = TARGET + request['url']
-        
-        for payload in request['payloads']:
+
+        # append a valid value. used to test multi parameters with only one payload
+        request['payloads'].append('valid_string')
+
+        # permutations of payloads based on parameters length
+        for payload in list(itertools.permutations(request['payloads'], len(request['parameters']))):
             data = { }
-            
-            # test all payloads combinations
-            for i in range(0, len(request['parameters'])):
-                for j in range(0, len(request['parameters'])):
-                    if j == i:
-                        data[request['parameters'][i]] = payload
-                    else:
-                        data[request['parameters'][j]] = 'valid_string' # valid value for input type
-            
-                if 'GET' == request['method'].upper():
-                    elaborate_response(request['method'], request['url'], request['parameters'][i], payload, requests.get(final_url, params=data))
-                elif 'POST' == request['method'].upper():
-                    elaborate_response(request['method'], request['url'], request['parameters'][i], payload, requests.post(final_url, data=data))
-                else:
-                    print(f'Method {request["method"]} is not supported')        
+
+            for i in range(len(request['parameters'])):
+                data[request['parameters'][i]] = payload[i]
+
+            if 'GET' == request['method'].upper():
+                elaborate_response(request['method'], request['url'], data, requests.get(final_url, params=data), vulnerabilities_lines)
+            elif 'POST' == request['method'].upper():
+                elaborate_response(request['method'], request['url'], data, payload, requests.post(final_url, data=data), vulnerabilities_lines)
+            else:
+                print(f'Method {request["method"]} is not supported')      
 
 def main():
     requests_dict = [ ]
@@ -110,7 +118,11 @@ def main():
         print('[DEBUG] - REQUESTS DICTIONARY')
         print(requests_dict)
 
-    send_request(requests_dict)
+    vulnerabilities_lines = [ ]
+
+    send_request(requests_dict, vulnerabilities_lines)
+
+    write_vulnerabilty_report(vulnerabilities_lines)
 
 if __name__ == '__main__':
     main()
