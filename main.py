@@ -62,13 +62,16 @@ def read_requests_details(requestsDict):
 
 # read payloads to inject
 def read_payloads(requests_dict):
-    with open(PAYLOADS_INPUT_PATH) as f:
+    with open(PAYLOADS_INPUT_PATH) as f:          
         i = 0
 
         for line in f:
             payloads = line.strip().split(PAYLOADS_SPLIT_VAL)
             requests_dict[i]['payloads'] = payloads
             i += 1
+
+        if i != len(requests_dict):
+            raise IndexError()
 
 def send_request(requests_dict):
     for request in requests_dict:
@@ -96,8 +99,13 @@ def main():
     requests_dict = [ ]
 
     read_requests_details(requests_dict)
-    read_payloads(requests_dict)
 
+    try:
+        read_payloads(requests_dict)
+    except IndexError:
+        print('Error: mismatching rows number between requests-details and payloads files')
+        exit()
+    
     if DEBUG:
         print('[DEBUG] - REQUESTS DICTIONARY')
         print(requests_dict)
