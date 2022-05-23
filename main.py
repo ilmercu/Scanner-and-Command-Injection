@@ -86,8 +86,10 @@ def send_request(requests_dict, vulnerabilities_lines):
     for request in requests_dict:
         final_url = TARGET + request['url']
 
-        # append a valid value. used to test multi parameters with only one payload
-        request['payloads'].append('valid_string')
+        if len(request['parameters']) > 1 and 1 == len(request['payloads']):
+            # append valid values to allows permutations (single payload in different parameters)
+            for _ in range(len(request['parameters']) - len(request['payloads'])):
+                request['payloads'].append('valid_string')
 
         # permutations of payloads based on parameters length
         for payload in list(itertools.permutations(request['payloads'], len(request['parameters']))):
@@ -101,7 +103,7 @@ def send_request(requests_dict, vulnerabilities_lines):
             elif 'POST' == request['method'].upper():
                 elaborate_response(request['method'], request['url'], data, requests.post(final_url, data=data), vulnerabilities_lines)
             else:
-                print(f'Method {request["method"]} is not supported')      
+                print(f'Method {request["method"]} is not supported')
 
 def main():
     requests_dict = [ ]
