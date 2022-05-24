@@ -3,6 +3,7 @@ import requests
 import os
 from datetime import datetime
 import itertools
+import re
 
 def write_vulnerabilty_report(vulnerabilities_lines):
     directories, filename = os.path.split(VULNERABILITY_OUTPUT_PATH)
@@ -17,10 +18,12 @@ def write_vulnerabilty_report(vulnerabilities_lines):
 def elaborate_response(http_method, url_under_test, parameters_and_values, response, vulnerabilities_lines):
     url_under_test = url_under_test[1:] # remove initial slash
 
+    number_of_columns_not_found = True
+
     for parameter, value in parameters_and_values.items():
         message = f'Found a command injection for URL: {url_under_test}, HTTP method: {http_method}, parameter: {parameter}, payload: {value}'
         
-        # skip checked combination
+        # skip already checked combination
         if message in vulnerabilities_lines:
             continue
 
@@ -52,18 +55,26 @@ def elaborate_response(http_method, url_under_test, parameters_and_values, respo
         elif 'ifconfig | grep inet' in value:
             if 'inet' in response.text:
                 vulnerable = True
+        elif re.findall(r'\'ORDER BY \d+ -- -', value): # if the text contais ORDER BY "number"
+            if not response.text: # response is empty if column number is out of range
+                columns_number = int(re.findall(r'\d+', value)[0])-1 # get correct columns number
+                message += f'. The table has {columns_number} column(s)'
+                vulnerable = True
+                number_of_columns_not_found = False
 
         if vulnerable:
             print(message)
-            vulnerabilities_lines.append(message)
+            vulnerabilities_lines.append(f'{datetime.now()} - {message}')
+
+    return number_of_columns_not_found
 
 # read requests details
-def read_requests_details(requestsDict):
+def read_requests_details(requests_dict):
     with open(REQUESTS_INPUT_PATH) as f:
         for line in f:
             values = line.strip().split(REQUESTS_SPLIT_VAL)
 
-            requestsDict.append({ 
+            requests_dict.append({ 
                 'method':  values[0],
                 'url': values[1],
                 'parameters': values[2].split(REQUESTS_PARAMETERS_SPLIT_VAL),
@@ -76,6 +87,12 @@ def read_payloads(requests_dict):
 
         for line in f:
             payloads = line.strip().split(PAYLOADS_SPLIT_VAL)
+
+            # can't inject other payload with the command to find the columns number
+            if len(payloads) > 1 and payloads[i].startswith(COMMAND_COLUMNS_NUMBER):
+                print(f'Only one payload can be injected with the {COMMAND_COLUMNS_NUMBER} command')
+                raise ValueError()
+
             requests_dict[i]['payloads'] = payloads
             i += 1
 
@@ -95,15 +112,39 @@ def send_request(requests_dict, vulnerabilities_lines):
         for payload in list(itertools.permutations(request['payloads'], len(request['parameters']))):
             data = { }
 
-            for i in range(len(request['parameters'])):
-                data[request['parameters'][i]] = payload[i]
+            more_requests_for_columns_number = False
 
-            if 'GET' == request['method'].upper():
-                elaborate_response(request['method'], request['url'], data, requests.get(final_url, params=data), vulnerabilities_lines)
-            elif 'POST' == request['method'].upper():
-                elaborate_response(request['method'], request['url'], data, requests.post(final_url, data=data), vulnerabilities_lines)
-            else:
-                print(f'Method {request["method"]} is not supported')
+            # to inject different ORDER BY values
+            if COMMAND_COLUMNS_NUMBER in request['payloads']:
+                more_requests_for_columns_number = True
+
+            for i in range(len(request['parameters'])):
+                if more_requests_for_columns_number:
+                    data[request['parameters'][i]] = '\'ORDER BY 1 -- -' if COMMAND_COLUMNS_NUMBER == payload[i] else payload[i]
+                else:
+                    data[request['parameters'][i]] = payload[i]
+                
+            # set current ORDER BY value
+            i = 1
+
+            while True:
+                if 'GET' == request['method'].upper():
+                    more_requests_for_columns_number = elaborate_response(request['method'], request['url'], data, requests.get(final_url, params=data), vulnerabilities_lines)
+                elif 'POST' == request['method'].upper():
+                    more_requests_for_columns_number = elaborate_response(request['method'], request['url'], data, requests.post(final_url, data=data), vulnerabilities_lines)
+                else:
+                    print(f'Method {request["method"]} is not supported. Check your input file')
+                    raise ValueError 
+
+                # found number of columns or the ORDER BY command is not related to --noc command
+                if not more_requests_for_columns_number or COMMAND_COLUMNS_NUMBER not in request['payloads']:
+                    break
+
+                i += 1
+
+                for parameter, value in data.items():
+                    if re.findall(r'\'ORDER BY \d+ -- -', value):
+                        data[parameter] = f'\'ORDER BY {i} -- -'
 
 def main():
     requests_dict = [ ]
@@ -112,19 +153,20 @@ def main():
 
     try:
         read_payloads(requests_dict)
+    
+        if DEBUG:
+            print('[DEBUG] - REQUESTS DICTIONARY')
+            print(requests_dict)
+
+        vulnerabilities_lines = [ ]
+
+        send_request(requests_dict, vulnerabilities_lines)
+        write_vulnerabilty_report(vulnerabilities_lines)
+    except ValueError:
+        exit()
     except IndexError:
         print('Error: mismatching rows number between requests-details and payloads files')
         exit()
-    
-    if DEBUG:
-        print('[DEBUG] - REQUESTS DICTIONARY')
-        print(requests_dict)
-
-    vulnerabilities_lines = [ ]
-
-    send_request(requests_dict, vulnerabilities_lines)
-
-    write_vulnerabilty_report(vulnerabilities_lines)
 
 if __name__ == '__main__':
     main()

@@ -12,3 +12,6 @@ REQUESTS_PARAMETERS_SPLIT_VAL = ','
 PAYLOADS_SPLIT_VAL = '~'
 
 CURRENT_USER = 'andre' # known user used for whoami test
+
+# special commands
+COMMAND_COLUMNS_NUMBER = '--noc' # command to find the number of columns in a table
