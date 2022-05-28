@@ -64,7 +64,8 @@ COMMAND_COLUMNS_NUMBER = '--noc' # command to find the number of columns in a ta
 
 ## Database setup
 The data stored in the database will be used to test sql injections.<br>
-Execute files in sqli-target/setup to create and populate the database.
+Execute files in sqli-target/setup to create and populate the database.<br>
+Connection credentials are stored in sqli-target/mysql_credentials.php file.
 
 ## Server execution
 ### For commands and arguments injections

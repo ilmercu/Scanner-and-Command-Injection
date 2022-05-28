@@ -1,5 +1,5 @@
 *.gz
-run_example.txt
+run_examples.txt
 __pycache__
 input_examples.txt
 assets/
