@@ -18,46 +18,29 @@ The scanner won't work on every environment, commands and arguments injections a
 The application code reads input files (created by the user) and send HTTP requests based on the specified method. Commands in payloads file will be injected into each parameter by using permutations. A different request will be sent for each payloads permutation.<br>
 Server response is elaborated in order to check vulnerabilities. This check is based on a simple idea of looking if specific strings are in response body.<br>
 If a vulnerability is found a descriptive line will be written inside the output file.
-There are two modes to run the code:
-+ cmd: used to test commands and arguments injections
-+ sql: used to test sql injections. In this mode payloads are used in a differt way than cmd mode. This mode is based on a specific command (in config file) used to perform a Union-based SQL injection. Other injections can be tested but no check is performed for them.
 
 ## Input files
-+ assets/input/requests-details.txt<br>
-used to specify the list of requests details containing HTTP method, resource and parameters under test.<br>
++ Requests details file: used to specify the list of requests details containing HTTP method, resource and parameters under test.<br>
 The format used to specify the details is: HTTP method:resource:parameter1,parameter2,..
-+ assets/input/payloads.txt<br>
-used to specify the list of commands that will be used in a specific request (based on files row number). <br>
-Each command is separated by tilde.
++ Payloads file: used to specify the list of commands that will be used in a specific request (based on files row number). <br>
+The format used to specify the details is: command1\~command2\~..
 
-### requests.details.txt example (cmd mode)
+### Requests details file format example
 ```
 GET:/ping.php:host
 GET:/ping-escapeshellcmd.php:host
 GET:/find-escapeshellcmd.php:input
 GET:/ping-no-amp.php:host
-```
-
-### requests.details.txt example (sql mode)
-```
-GET:/find.php:search
-POST:/login.php:user,pass
 POST:/login2.php:user,pass
 GET:/search_by_price2.php:max
 ```
 
-### payloads.txt example (cmd mode)
+### Payloads file format example
 ```
 ;cat /etc/passwd
 ;ls -la
 ping.php -exec whoami ;
 ;head ping.php
-```
-
-### payloads.txt example (sql mode)
-```
---noc
---noc
 --noc
 --noc
 ```
@@ -70,16 +53,13 @@ TARGET = 'http://localhost:8000' # target
 
 VULNERABILITY_OUTPUT_PATH = 'assets/output/vulnerability-output.txt' # output path
 
-REQUESTS_INPUT_PATH = 'assets/input/requests-details.txt' # requests list path
-PAYLOADS_INPUT_PATH = 'assets/input/payloads.txt' # commands list path
-
 REQUESTS_SPLIT_VAL = ':' # split char for requests
 REQUESTS_PARAMETERS_SPLIT_VAL = ',' # split char for parameters in requests
 PAYLOADS_SPLIT_VAL = '~' # split char for commands values
 
 CURRENT_USER = 'andre' # known user used for whoami test
 
-COMMAND_COLUMNS_NUMBER = '--noc' # command to find the number of columns in a table
+COMMAND_COLUMNS_NUMBER = '--noc' # command to find the number of columns in a table. Valid only in sql mode
 ```
 
 ## Database setup
@@ -102,15 +82,19 @@ foo@bar:~$ php -S localhost:8000
 ## Application execution
 ### Arguments
 + -m, Injection mode, required. Permitted values [cmd, sql]
+  + cmd: used to test commands and arguments injections
+  + sql: used to test sql injections. In this mode payloads are used in a differt way than cmd mode. This mode is based on a specific command (in config file) used to perform a Union-based SQL injection. Other injections can be tested but no check is performed for them.
++ -r, Requests details file, required
++ -p, Payloads file, required
 
-### For cmd mode
+### Example for cmd mode
 ```console
-foo@bar:~$ python main.py -m cmd
+foo@bar:~$ python main.py -m cmd -r assets/input/requests-details-cmd.txt -p assets/input/payloads-cmd.txt
 ```
 
-### For sql mode
+### Example for sql mode
 ```console
-foo@bar:~$ python main.py -m sql
+foo@bar:~$ python main.py -m sql -r assets/input/requests-details-sql.txt -p assets/input/payloads-sql.txt
 ```
 
 ## Output

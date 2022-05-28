@@ -67,8 +67,8 @@ def elaborate_response(http_method, url_under_test, parameters_and_values, respo
     return number_of_columns
 
 # read requests details
-def read_requests_details(requests_dict):
-    with open(REQUESTS_INPUT_PATH) as f:
+def read_requests_details(requests_file, requests_dict):
+    with open(requests_file) as f:
         for line in f:
             values = line.strip().split(REQUESTS_SPLIT_VAL)
 
@@ -79,8 +79,8 @@ def read_requests_details(requests_dict):
             })
 
 # read payloads to inject
-def read_payloads(requests_dict):
-    with open(PAYLOADS_INPUT_PATH) as f:          
+def read_payloads(payloads_file, requests_dict):
+    with open(payloads_file) as f:          
         i = 0
 
         for line in f:
@@ -97,7 +97,7 @@ def read_payloads(requests_dict):
         if i != len(requests_dict):
             raise IndexError()
 
-def send_request(request_details, data, final_url, vulnerabilities_lines):
+def send_request(request_details, data, final_url):
     if 'GET' == request_details['method'].upper():
         return requests.get(final_url, params=data)
     
@@ -139,13 +139,14 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
                             else:
                                 data[request['parameters'][i]] = payload[i]
 
-                        response = send_request(request, data, final_url, vulnerabilities_lines)
+                        response = send_request(request, data, final_url)
 
                         if 404 == response.status_code:
                             if DEBUG:
-                                print(f'[DEBUG] - RESOURCE NOT FOUND: {request["url"]}')
-                                end_loop = True
-                                break
+                                print(f'[DEBUG] - FILE NOT FOUND: {request["url"]}')
+                            
+                            end_loop = True
+                            break
 
                         number_of_columns = elaborate_response(request['method'], request['url'], data, response, vulnerabilities_lines)
 
@@ -153,9 +154,9 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
                         if 0 == number_of_columns:
                             pre_order_by_values.remove(pre_order_by_value) # remove invalid char
                         elif number_of_columns: # if the number of columns is found, send a confirmation request
-                            columns_values = [f'VERSION()']
+                            columns_values = ['VERSION()']
 
-                            for i in range(1, number_of_columns):
+                            for i in range(1, number_of_columns): # skip a column, first one is replaced by the version command
                                 columns_values.append(i)
 
                             for column_value in list(itertools.permutations(columns_values)):
@@ -174,7 +175,7 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
                                     else:
                                         confirmation_data[request['parameters'][i]] = payload[i]
 
-                                response = send_request(request, confirmation_data, final_url, vulnerabilities_lines)
+                                response = send_request(request, confirmation_data, final_url)
 
                                 if re.findall('\d.\d.[\d.]+', response.text): # check if the response contains a version format string
                                     url_under_test = request['url'][1:] # remove initial slash
@@ -220,14 +221,15 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
                     for i in range(len(request['parameters'])):
                         data[request['parameters'][i]] = payload[i]
                     
-                    response = send_request(request, data, final_url, vulnerabilities_lines)
+                    response = send_request(request, data, final_url)
 
                     end_loop = True
 
                     if 404 == response.status_code:
                         if DEBUG:
-                            print(f'[DEBUG] - RESOURCE NOT FOUND: {request["url"]}')
-                            break
+                            print(f'[DEBUG] - FILE NOT FOUND: {request["url"]}')
+                        
+                        break
                     
                     elaborate_response(request['method'], request['url'], data, response, vulnerabilities_lines)
 
@@ -242,13 +244,14 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
 
 @click.command()
 @click.option('--mode', '-m', help='Injection mode [sql, cmd]', type=click.Choice(['sql', 'cmd']), required=True)
-def main(mode):
+@click.option('--irequests', '-r', help='Requests details file', required=True)
+@click.option('--ipayloads', '-p', help='Payloads file', required=True)
+def main(mode, irequests, ipayloads):
     requests_dict = [ ]
 
-    read_requests_details(requests_dict)
-
     try:
-        read_payloads(requests_dict)
+        read_requests_details(irequests, requests_dict)
+        read_payloads(ipayloads, requests_dict)
     
         if DEBUG:
             print('[DEBUG] - REQUESTS DICTIONARY')
@@ -263,6 +266,8 @@ def main(mode):
     except IndexError:
         print('Error: mismatching rows number between requests-details and payloads files')
         exit()
+    except FileNotFoundError:
+        print('Error: file not found. Check command-line options')
 
 if __name__ == '__main__':
     main()
