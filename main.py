@@ -21,7 +21,7 @@ def write_vulnerabilty_report(vulnerabilities_lines):
         for message in vulnerabilities_lines:
             f.write(f'{message}\n')
 
-def elaborate_response(http_method, url_under_test, parameters_and_values, response, vulnerabilities_lines):
+def elaborate_response(http_method, url_under_test, parameters_and_values, response, vulnerabilities_lines, confirmation_data=None, extra_message=None):
     """
     it elaborates the response and checks for vulnerabilities. If a vulnerability is found then a new line will be saved to be written inside the output file.
     :param http_method: HTTP metod
@@ -29,16 +29,21 @@ def elaborate_response(http_method, url_under_test, parameters_and_values, respo
     :param parameters_and_values: dictionary containing (parameter_name, paramater_value) as (key, value)
     :param response: HTTP response
     :param vulnerabilities_lines: list of lines containing vulnerabilities to write inside the output file
+    :param confirmation_data: confirmation data used to confirm a vulnerability found using the number of columns command, None if the request wasn't a confirmation request
+    :param extra_message: details to append to the message, None if the request wasn't a confirmation request
     :return: number of columns in a table if the ORDER BY command index is out of range, None otherwise
     """
     
     url_under_test = url_under_test[1:] # remove initial slash
 
     if DEBUG:
+        if confirmation_data:
+            print('[DEBUG] - STARTING VULNERABILITY CONFIRMATION')
+
         print(f'\n[DEBUG] - URL: {url_under_test}')
         print(f'[DEBUG] - HTTP METHOD: {http_method}')
         print(f'[DEBUG] - COMPLETE URL: {response.url}')
-        print(f'[DEBUG] - PARAMETERS AND VALUES: {parameters_and_values}')
+        print(f'[DEBUG] - PARAMETERS AND VALUES: {confirmation_data if confirmation_data else parameters_and_values}')
         
         print('[DEBUG] - RESPONSE')
         print(response.text)
@@ -47,6 +52,9 @@ def elaborate_response(http_method, url_under_test, parameters_and_values, respo
 
     for parameter, value in parameters_and_values.items():
         message = f'Found a command injection for URL: {url_under_test}, HTTP method: {http_method}, parameter: {parameter}, payload: {value}'
+
+        if extra_message:
+            message += extra_message
         
         # skip already checked combination
         if message in vulnerabilities_lines:
@@ -54,30 +62,37 @@ def elaborate_response(http_method, url_under_test, parameters_and_values, respo
 
         vulnerable = False
 
-        # check expected results
-        if 'ls' in value:
-            if url_under_test in response.text:
-                vulnerable = True
-        elif 'cat /etc/passwd' in value:
-            if 'root' in response.text:
-                vulnerable = True
-        elif ('head' in value or 'grep php' in value) and '.php' in value:
-            if '<?php' in response.text:
-                vulnerable = True
-        elif 'whoami' in value:
-            if CURRENT_USER in response.text:
-                vulnerable = True
-        elif 'ifconfig | grep inet' in value:
-            if 'inet' in response.text:
-                vulnerable = True
-        elif re.findall('[\'"1] ORDER BY \d+ -- -', value): # if the payload contais command to find the number of columns
-            if not response.text and 500 == response.status_code: # response is empty if column number is out of range
-                columns_number = int(re.findall('\d+', value)[-1])-1 # correct columns number = previous
-                return columns_number
+        # if the request was a confirmation request
+        if confirmation_data:
+            vulnerable = len(re.findall('[\'"1] ORDER BY \d+ -- -', value)) > 0 # vulnerability is confirmed for each ORDER BY parameter value
+        else:
+            # check expected results
+            if 'ls' in value:
+                if url_under_test in response.text:
+                    vulnerable = True
+            elif 'cat /etc/passwd' in value:
+                if 'root' in response.text:
+                    vulnerable = True
+            elif ('head' in value or 'grep php' in value) and '.php' in value:
+                if '<?php' in response.text:
+                    vulnerable = True
+            elif 'whoami' in value:
+                if CURRENT_USER in response.text:
+                    vulnerable = True
+            elif 'ifconfig | grep inet' in value:
+                if 'inet' in response.text:
+                    vulnerable = True
+            elif re.findall('[\'"1] ORDER BY \d+ -- -', value): # if the payload contais command to find the number of columns
+                if not response.text and 500 == response.status_code: # response is empty if column number is out of range
+                    columns_number = int(re.findall('\d+', value)[-1])-1 # correct columns number = previous
+                    return columns_number
 
         if vulnerable:
             print(message)
             vulnerabilities_lines.append(f'{datetime.now()} - {message}')
+
+    if DEBUG and confirmation_data:
+        print('[DEBUG] - VULNERABILITY CONFIRMATION FINISHED')
 
     return number_of_columns
 
@@ -155,8 +170,6 @@ def send_confirmation_request(original_request_data, number_of_columns, request_
     :return: true if the vulnerability is confirmed, false otherwise
     """
 
-    is_vulnerable = False
-
     columns_values = ['VERSION()']
 
     for _ in range(1, number_of_columns): # skip a column, first one is replaced by the version command
@@ -181,43 +194,14 @@ def send_confirmation_request(original_request_data, number_of_columns, request_
 
         response = send_request(request_details['method'], confirmation_data, TARGET + request_details['url'])
 
-        if re.findall('\d.\d.[\d.]+', response.text): # check if the response contains a version format string
-            url_under_test = request_details['url'][1:] # remove initial slash
+        if re.findall('\d.\d.[\d.]+', response.text): # if the response contains a version format string then the vulnerability is confirmed
+            extra_message = f'. The table has {number_of_columns} column(s)'
 
-            if DEBUG:
-                print('[DEBUG] - STARTING VULNERABILITY CONFIRMATION')
-                print(f'[DEBUG] - URL: {url_under_test}')
-                print(f'[DEBUG] - HTTP METHOD: {request_details["method"]}')
-                print(f'[DEBUG] - COMPLETE URL: {response.url}')
-                print(f'[DEBUG] - PARAMETERS AND VALUES: {confirmation_data}')
-                
-                print('[DEBUG] - RESPONSE')
-                print(response.text)
+            # use original data to write output file
+            elaborate_response(request_details['method'], request_details['url'], original_request_data, response, vulnerabilities_lines, confirmation_data, extra_message)
+            return True
 
-            # loop over original request data
-            for parameter, value in original_request_data.items():
-                # skip if the command is not used to find the number of columns
-                if not re.findall('[\'"1] ORDER BY \d+ -- -', value):
-                    continue
-
-                message = f'Found a command injection for URL: {request_details["url"][1:]}, HTTP method: {request_details["method"]}, parameter: {parameter}, payload: {value}. The table has {number_of_columns} column(s)'
-
-                # skip already checked combination
-                if message in vulnerabilities_lines:
-                    continue
-
-                print(message)
-                vulnerabilities_lines.append(f'{datetime.now()} - {message}')
-
-            is_vulnerable = True
-
-            if DEBUG:
-                print('[DEBUG] - VULNERABILITY CONFIRMATION FINISHED')
-
-        if is_vulnerable:
-            break
-
-    return is_vulnerable
+    return False
 
 def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_run):
     """
@@ -262,9 +246,7 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
                         response = send_request(request['method'], data, final_url)
 
                         if 404 == response.status_code:
-                            if DEBUG:
-                                print(f'[DEBUG] - FILE NOT FOUND: {request["url"]}')
-                            
+                            print(f'FILE NOT FOUND: {request["url"]}')                            
                             end_loop = True
                             break
 
@@ -288,9 +270,7 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
                     response = send_request(request['method'], data, final_url)
 
                     if 404 == response.status_code:
-                        if DEBUG:
-                            print(f'[DEBUG] - FILE NOT FOUND: {request["url"]}')
-                        
+                        print(f'FILE NOT FOUND: {request["url"]}')
                         break
                     
                     elaborate_response(request['method'], request['url'], data, response, vulnerabilities_lines)
