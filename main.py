@@ -6,6 +6,15 @@ import itertools
 import re
 import click
 from classes.VulnerableResource import VulnerableResource
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.core.utils import ChromeType
 
 def write_vulnerabilty_report(vulnerabilities_lines):
     """
@@ -33,7 +42,6 @@ def is_parameter_vulnerable(parameter_value, url_under_test, response):
     :return: enum with value: vulnerable, seems vulnerable or not vulnerable
     """
     
-    # check expected results
     if 'ls' in parameter_value:
         if url_under_test in response.text:
             return VulnerableResource.VULNERABLE
@@ -58,6 +66,12 @@ def is_parameter_vulnerable(parameter_value, url_under_test, response):
     if re.findall('[\'"1] ORDER BY \d+ -- -', parameter_value):
         # response is empty if column number is out of range
         if not response.text and 500 == response.status_code:
+            return VulnerableResource.SEEMS_VULNERABLE
+
+    # xss injection
+    if re.findall('<script>alert([\'"]?(.*)[\'"]?)</script>', parameter_value):    
+        # if the response contains script string in the body    
+        if parameter_value in response.text:
             return VulnerableResource.SEEMS_VULNERABLE
 
     return VulnerableResource.NOT_VULNERABLE
@@ -286,11 +300,65 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, run_mode
                         print(response.text)
                 
                     for i in range(len(request['parameters'])):
-                        if is_parameter_vulnerable(data[request['parameters'][i]] , request['url'][1:], response) == VulnerableResource.VULNERABLE:
+                        vulnerabilty_status = is_parameter_vulnerable(data[request['parameters'][i]], request['url'][1:], response) 
+                        
+                        if vulnerabilty_status == VulnerableResource.VULNERABLE:
                             message = f'Found a command injection for URL: {request["url"][1:]}, HTTP method: {request["method"]}, parameter: {request["parameters"][i]}, payload: {data[request["parameters"][i]]}'
             
                             print(message)
                             vulnerabilities_lines.append(f'{datetime.now()} - {message}')
+                        elif 'xss' == run_mode and 'GET' == request['method'].upper() and vulnerabilty_status == VulnerableResource.SEEMS_VULNERABLE:
+                            options = Options()
+                            #options.add_experimental_option('detach', KEEP_BROWSER_OPEN)
+                            driver = webdriver.Chrome(service=Service(ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install()), options=options)
+
+                            params = '?'
+
+                            for j in range(len(request['parameters'])):
+                                params += f'{request["parameters"][j]}={payload[j]}&'
+
+                            params = params[:-1] # remove last char
+
+                            driver.get(final_url + params)
+
+                            alert_found = False
+
+                            # loop because other alerts may exist 
+                            while True:                                
+                                try:
+                                    WebDriverWait(driver, 5).until(EC.alert_is_present())
+                                    alert = driver.switch_to.alert
+
+                                    parameter_alert_value = re.search('\((.*)\)', data[request["parameters"][i]]).group(0)
+
+                                    # remove parenthesis
+                                    parameter_alert_value = parameter_alert_value[1:-1]
+
+                                    if parameter_alert_value.startswith('\'') or parameter_alert_value.startswith('"'):
+                                        parameter_alert_value = parameter_alert_value[1:] # removing extra char
+
+                                    if parameter_alert_value.endswith('\'') or parameter_alert_value.endswith('"'):
+                                        parameter_alert_value = parameter_alert_value[:-1] # removing extra char
+
+                                    # found text
+                                    if alert.text == parameter_alert_value:
+                                        message = f'Found a xss injection for URL: {request["url"][1:]}, HTTP method: {request["method"]}, parameter: {request["parameters"][i]}, payload: {data[request["parameters"][i]]}'
+                    
+                                        print(message)
+                                        vulnerabilities_lines.append(f'{datetime.now()} - {message}')
+                                        
+                                        alert_found = True
+
+                                    # close popup
+                                    alert.accept()
+
+                                    if alert_found:
+                                        break
+                                except TimeoutException:
+                                    if DEBUG:
+                                        print(f'[DEBUG] - ALERT NOT FOUND, PARAMETER VALUE: {data[request["parameters"][i]]}')
+
+                            driver.quit()
 
             # found and confirmed number of columns
             if end_loop or not noc_command_in_payloads:

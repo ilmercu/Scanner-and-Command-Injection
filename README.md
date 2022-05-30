@@ -13,6 +13,8 @@ The scanner won't work on every environment, commands and arguments injections a
 ### Libraries
 + requests
 + click
++ selenium (version 4)
++ webdriver-manager
 
 ## Code explanation
 The application code reads input files (created by the user) and send HTTP requests based on the specified method. Commands in payloads file will be injected into each parameter by using permutations. A different request will be sent for each payloads permutation.<br>
@@ -33,6 +35,7 @@ GET:/find-escapeshellcmd.php:input
 GET:/ping-no-amp.php:host
 POST:/login2.php:user,pass
 GET:/search_by_price2.php:max
+GET:/echo-name.php:name
 ```
 
 ### Payloads file format example
@@ -43,6 +46,7 @@ ping.php -exec whoami ;
 ;head ping.php
 --noc
 --noc
+<script>alert('test');</script>~<script>alert("test2");</script>
 ```
 
 ## Config file example
@@ -80,11 +84,18 @@ foo@bar:~$ cd sqli-target
 foo@bar:~$ php -S localhost:8000
 ```
 
+### For xss injections
+```console
+foo@bar:~$ cd xss-target
+foo@bar:~$ php -S localhost:8000
+```
+
 ## Application execution
 ### Arguments
-+ -m, Injection mode, required. Permitted values [cmd, sql]
-  + cmd: used to test commands and arguments injections
++ -m, Injection mode, required. Permitted values [cmd, sql, xss]
+  + cmd: used to test commands and arguments injections.
   + sql: used to test sql injections. In this mode payloads are used in a differt way than cmd mode. This mode is based on a specific command (in config file) used to perform a Union-based SQL injection. Other injections can be tested but no check is performed for them.
+  + xss: used to test xss injections for GET HTTP method. This mode is based on the idea of injecting payloads, checks if them are in the HTTP response and they are shown as dialog popup by using selenium.
 + -r, Requests details file, required
 + -p, Payloads file, required
 
@@ -96,6 +107,11 @@ foo@bar:~$ python main.py -m cmd -r assets/input/requests-details-cmd.txt -p ass
 ### Example for sql mode
 ```console
 foo@bar:~$ python main.py -m sql -r assets/input/requests-details-sql.txt -p assets/input/payloads-sql.txt
+```
+
+### Example for xss mode
+```console
+foo@bar:~$ python main.py -m xss -r assets/input/requests-details-xss.txt -p assets/input/payloads-xss.txt
 ```
 
 ## Output
