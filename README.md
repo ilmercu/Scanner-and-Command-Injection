@@ -16,6 +16,9 @@ The scanner won't work on every environment, commands and arguments injections a
 + selenium (version 4)
 + webdriver-manager
 
+### Browser
++ Chrome
+
 ## Code explanation
 The application code reads input files (created by the user) and send HTTP requests based on the specified method. Commands in payloads file will be injected into each parameter by using permutations. A different request will be sent for each payloads permutation.<br>
 Server response is elaborated in order to check vulnerabilities. This check is based on a simple idea of looking if specific strings are in response body.<br>
@@ -46,12 +49,13 @@ ping.php -exec whoami ;
 ;head ping.php
 --noc
 --noc
-<script>alert('test');</script>~<script>alert("test2");</script>
+--xss
 ```
 
 ## Config file example
 ```python
 DEBUG = True # if True, code execution prints debugging lines
+KEEP_BROWSER_OPEN = False # used to keep the browser open after selenium checks
 
 TARGET = 'http://localhost:8000' # target
 
@@ -64,6 +68,9 @@ PAYLOADS_SPLIT_VAL = '~' # split char for commands values
 CURRENT_USER = 'andre' # known user used for whoami test
 
 COMMAND_COLUMNS_NUMBER = '--noc' # command to find the number of columns in a table. Valid only in sql mode
+COMMAND_XSS_INJECTION = '--xss' # command to test xss injections. Valid only in xss mode
+
+MAX_ALERT_WAITING_TIME = 5 # max time (in seconds) to wait for the popup message in browser
 ```
 
 ## Database setup

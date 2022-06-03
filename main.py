@@ -15,6 +15,53 @@ from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.core.utils import ChromeType
+from bs4 import BeautifulSoup
+import random
+import string
+
+def generate_random_string(length):
+    """
+    it generates a random string containing numbers and letters.
+
+    :param length: length of the string
+    :return: random string
+    """
+    
+    letters = string.ascii_lowercase + string.digits
+    return ''.join(random.choice(letters) for i in range(length))
+
+def is_resource_found(status_code, url):
+    """
+    it checks the status code of a response.
+
+    :param status_code: status code of a response
+    :param url: server resource
+    :return: False if the status code is 404, True otherwise
+    """
+    
+    if 404 == status_code:
+        print(f'FILE NOT FOUND: {url}')                            
+        return False
+
+    return True
+
+def print_debug_info(request, response, data):
+    """
+    it prints debug info.
+
+    :param request: request details
+    :param response: HTTP response
+    :param data: dictionary containing data sent during the request
+    """
+    
+    if DEBUG:
+        print(f'\n[DEBUG] - URL: {request["url"][1:]}')
+        print(f'[DEBUG] - HTTP METHOD: {request["method"]}')
+        print(f'[DEBUG] - COMPLETE URL: {response.url}')
+        print(f'[DEBUG] - PARAMETERS AND VALUES: {data}')
+        
+        print('[DEBUG] - RESPONSE')
+        print(response.text)
 
 def write_vulnerabilty_report(vulnerabilities_lines):
     """
@@ -141,6 +188,16 @@ def send_request(http_method, data, final_url):
     print(f'Method {http_method} is not supported. Check your input file')
     raise ValueError
 
+def normalize_parameters(request):
+    """
+    it normalizes the parameters by adding valid values if missing.
+    """
+    
+    # if at least one parameter hasn't a payload  
+    if len(request['parameters']) > len(request['payloads']):
+        for _ in range(len(request['parameters']) - len(request['payloads'])):
+            request['payloads'].append('valid_string') # append a valid value for each parameter 
+
 def prepare_data(request_parameters, payloads, custom_value=None):
     """
     it prepares data used in HTTP request.
@@ -154,7 +211,7 @@ def prepare_data(request_parameters, payloads, custom_value=None):
     data = { }
     
     for i in range(len(request_parameters)):
-        if custom_value and COMMAND_COLUMNS_NUMBER == payloads[i]:
+        if custom_value and (COMMAND_COLUMNS_NUMBER == payloads[i] or COMMAND_XSS_INJECTION == payloads[i]):
             data[request_parameters[i]] = custom_value
         else:
             data[request_parameters[i]] = payloads[i]
@@ -232,10 +289,7 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, run_mode
     for request in requests_dict:
         final_url = TARGET + request['url']
 
-        # if at least one parameter hasn't a payload  
-        if len(request['parameters']) > len(request['payloads']):
-            for _ in range(len(request['parameters']) - len(request['payloads'])):
-                request['payloads'].append('valid_string') # append a valid value for each parameter 
+        normalize_parameters(request)
 
         # set current ORDER BY value
         current_column_number = 1
@@ -243,10 +297,20 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, run_mode
         # used to prepend char in ORDER BY command
         pre_order_by_values = ['\'', '"', '1']
 
+        random_string_length = 8
+        random_string = generate_random_string(random_string_length)
+
+        xss_injections = [
+            f'<script>alert(\'{random_string}\');</script>',
+            f'\'><script>alert(\'{random_string}\');</script>',
+            f'"><script>alert(\'{random_string}\');</script>'
+        ]
+
+        noc_command_in_payloads = COMMAND_COLUMNS_NUMBER in request['payloads']
+
+        # this loop allows permutation using incremental current_column_number value
         while True:
             end_loop = False
-
-            noc_command_in_payloads = COMMAND_COLUMNS_NUMBER in request['payloads']
 
             # permutations of payloads based on parameters length
             for payload in set(itertools.permutations(request['payloads'], len(request['parameters']))):
@@ -256,19 +320,11 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, run_mode
                         data = prepare_data(request['parameters'], payload, f'{pre_order_by_value} ORDER BY {current_column_number} -- -')
                         response = send_request(request['method'], data, final_url)
 
-                        if 404 == response.status_code:
-                            print(f'FILE NOT FOUND: {request["url"]}')                            
+                        if not is_resource_found(response.status_code, request['url']):
                             end_loop = True
                             break
 
-                        if DEBUG:
-                            print(f'\n[DEBUG] - URL: {request["url"][1:]}')
-                            print(f'[DEBUG] - HTTP METHOD: {request["method"]}')
-                            print(f'[DEBUG] - COMPLETE URL: {response.url}')
-                            print(f'[DEBUG] - PARAMETERS AND VALUES: {data}')
-                            
-                            print('[DEBUG] - RESPONSE')
-                            print(response.text)
+                        print_debug_info(request, response, data)
 
                         for i in range(len(request['parameters'])):
                             if COMMAND_COLUMNS_NUMBER != payload[i]:
@@ -282,54 +338,72 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, run_mode
                                     # confirmation needed
                                     end_loop = send_confirmation_request(request['parameters'][i], data[request['parameters'][i]], number_of_columns, request, payload, pre_order_by_value, vulnerabilities_lines)
                                     break
-                else: # simply inject commands
-                    data = prepare_data(request['parameters'], payload)                    
-                    response = send_request(request['method'], data, final_url)
+                elif 'GET' == request['method'].upper() and COMMAND_XSS_INJECTION in request['payloads'] and 'xss' == run_mode:
+                    for xss_injection in xss_injections:
+                        data = prepare_data(request['parameters'], payload, xss_injection)
+                        response = send_request(request['method'], data, final_url)
 
-                    if 404 == response.status_code:
-                        print(f'FILE NOT FOUND: {request["url"]}')
-                        break
+                        if not is_resource_found(response.status_code, request['url']):
+                            break
 
-                    if DEBUG:
-                        print(f'\n[DEBUG] - URL: {request["url"][1:]}')
-                        print(f'[DEBUG] - HTTP METHOD: {request["method"]}')
-                        print(f'[DEBUG] - COMPLETE URL: {response.url}')
-                        print(f'[DEBUG] - PARAMETERS AND VALUES: {data}')
-                        
-                        print('[DEBUG] - RESPONSE')
-                        print(response.text)
-                
-                    for i in range(len(request['parameters'])):
-                        vulnerabilty_status = is_parameter_vulnerable(data[request['parameters'][i]], request['url'][1:], response) 
-                        
-                        if vulnerabilty_status == VulnerableResource.VULNERABLE:
-                            message = f'Found a command injection for URL: {request["url"][1:]}, HTTP method: {request["method"]}, parameter: {request["parameters"][i]}, payload: {data[request["parameters"][i]]}'
-            
-                            print(message)
-                            vulnerabilities_lines.append(f'{datetime.now()} - {message}')
-                        elif 'xss' == run_mode and 'GET' == request['method'].upper() and vulnerabilty_status == VulnerableResource.SEEMS_VULNERABLE:
-                            options = Options()
-                            #options.add_experimental_option('detach', KEEP_BROWSER_OPEN)
-                            driver = webdriver.Chrome(service=Service(ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install()), options=options)
+                        print_debug_info(request, response, data)
 
-                            params = '?'
+                        alert_found = False
 
-                            for j in range(len(request['parameters'])):
-                                params += f'{request["parameters"][j]}={payload[j]}&'
+                        for i in range(len(request['parameters'])):
+                            if COMMAND_XSS_INJECTION != payload[i]:
+                                continue
 
-                            params = params[:-1] # remove last char
+                            if is_parameter_vulnerable(data[request['parameters'][i]], request['url'][1:], response) == VulnerableResource.SEEMS_VULNERABLE:
+                                soup = BeautifulSoup(response.text, 'html.parser')
 
-                            driver.get(final_url + params)
+                                script_tags = soup.find_all('script')
+                                
+                                open_tag = '<script>'
+                                open_tag_index = data[request['parameters'][i]].index(open_tag)
+                                close_tag_index = data[request['parameters'][i]].index('</script>')
 
-                            alert_found = False
+                                script_body = data[request['parameters'][i]][open_tag_index + len(open_tag) : close_tag_index]
 
-                            # loop because other alerts may exist 
-                            while True:                                
-                                try:
-                                    WebDriverWait(driver, 5).until(EC.alert_is_present())
-                                    alert = driver.switch_to.alert
+                                unsafe_tag = None
+                                unsafe_attr = None
 
-                                    parameter_alert_value = re.search('\((.*)\)', data[request["parameters"][i]]).group(0)
+                                # loop over script tags
+                                for script_tag in script_tags:
+                                    if script_body == script_tag.string:
+                                        alert_found = True
+
+                                        unsafe_tag = script_tag.parent
+
+                                        # if vulnerability seems to be directly in body (no tag, no attribute, etc)
+                                        if '[document]' == unsafe_tag.name:
+                                            unsafe_tag = script_tag.previous_element
+
+                                        # if the vulnerability is directly inside the body, unsafe_tag.name is None
+                                        if unsafe_tag.name:
+                                            # last attr is the injectable attr
+                                            unsafe_attr = list(unsafe_tag.attrs)[-1]
+
+                                        break
+
+                                if alert_found:
+                                    message = f'Found a xss injection for URL: {request["url"][1:]}, HTTP method: {request["method"]}, parameter: {request["parameters"][i]}, payload: {data[request["parameters"][i]]}'
+                                    message += '. The injection was found '
+
+                                    if unsafe_attr:
+                                        message += f'inside the tag: {unsafe_tag.name}, attribute: {unsafe_attr}'
+                                    else:
+                                        message += 'directly inside the body'
+
+                                    options = Options()
+                                    options.add_experimental_option('detach', KEEP_BROWSER_OPEN)
+                                    driver = webdriver.Chrome(service=Service(ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install()), options=options)
+
+                                    driver.get(response.url)
+
+                                    alert_found = False
+
+                                    parameter_alert_value = re.search('\((.*)\)', data[request['parameters'][i]]).group(0)
 
                                     # remove parenthesis
                                     parameter_alert_value = parameter_alert_value[1:-1]
@@ -340,26 +414,51 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, run_mode
                                     if parameter_alert_value.endswith('\'') or parameter_alert_value.endswith('"'):
                                         parameter_alert_value = parameter_alert_value[:-1] # removing extra char
 
-                                    # found text
-                                    if alert.text == parameter_alert_value:
-                                        message = f'Found a xss injection for URL: {request["url"][1:]}, HTTP method: {request["method"]}, parameter: {request["parameters"][i]}, payload: {data[request["parameters"][i]]}'
-                    
-                                        print(message)
-                                        vulnerabilities_lines.append(f'{datetime.now()} - {message}')
-                                        
-                                        alert_found = True
+                                    # loop because other alerts may exist
+                                    while True:                               
+                                        try:
+                                            WebDriverWait(driver, MAX_ALERT_WAITING_TIME).until(EC.alert_is_present())
+                                            alert = driver.switch_to.alert
 
-                                    # close popup
-                                    alert.accept()
+                                            # found text
+                                            if alert.text == parameter_alert_value:
+                                                print(message)
+                                                vulnerabilities_lines.append(f'{datetime.now()} - {message}')
+                                                
+                                                alert_found = True
 
-                                    if alert_found:
-                                        break
-                                except TimeoutException:
-                                    if DEBUG:
-                                        print(f'[DEBUG] - ALERT NOT FOUND, PARAMETER VALUE: {data[request["parameters"][i]]}')
+                                            # close popup
+                                            alert.accept()
 
-                            driver.quit()
+                                            if alert_found:
+                                                break
+                                        except TimeoutException:
+                                            if DEBUG:
+                                                print(f'[DEBUG] - ALERT NOT FOUND, PARAMETER VALUE: {data[request["parameters"][i]]}')
 
+                                            break
+                                    
+                                    if not KEEP_BROWSER_OPEN:
+                                        driver.quit()
+
+                        if alert_found:
+                            break
+                else: # simply inject commands
+                    data = prepare_data(request['parameters'], payload)                    
+                    response = send_request(request['method'], data, final_url)
+
+                    if not is_resource_found(response.status_code, request['url']):
+                        break
+
+                    print_debug_info(request, response, data)
+                
+                    for i in range(len(request['parameters'])):                        
+                        if is_parameter_vulnerable(data[request['parameters'][i]], request['url'][1:], response)  == VulnerableResource.VULNERABLE:
+                            message = f'Found a command injection for URL: {request["url"][1:]}, HTTP method: {request["method"]}, parameter: {request["parameters"][i]}, payload: {data[request["parameters"][i]]}'
+            
+                            print(message)
+                            vulnerabilities_lines.append(f'{datetime.now()} - {message}')
+                        
             # found and confirmed number of columns
             if end_loop or not noc_command_in_payloads:
                 break
