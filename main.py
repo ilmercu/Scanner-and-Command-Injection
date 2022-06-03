@@ -136,7 +136,7 @@ def read_requests_details(requests_file, requests_dict):
             values = line.strip().split(REQUESTS_SPLIT_VAL)
 
             requests_dict.append({ 
-                'method':  values[0],
+                'method':  values[0].upper(),
                 'url': values[1],
                 'parameters': values[2].split(REQUESTS_PARAMETERS_SPLIT_VAL),
             })
@@ -157,9 +157,9 @@ def read_payloads(payloads_file, requests_dict):
         for line in f:
             payloads = line.strip().split(PAYLOADS_SPLIT_VAL)
 
-            # can't inject other payload with the command to find the columns number
-            if len(payloads) > 1 and COMMAND_COLUMNS_NUMBER == payloads[0]:
-                print(f'Only one payload can be injected with the {COMMAND_COLUMNS_NUMBER} command')
+            # can't inject other payload with special commands
+            if len(payloads) > 1 and (COMMAND_COLUMNS_NUMBER == payloads[0] or COMMAND_XSS_INJECTION == payloads[0]):
+                print('Only one payload can be injected with special commands')
                 raise ValueError()
 
             requests_dict[i]['payloads'] = payloads
@@ -179,10 +179,10 @@ def send_request(http_method, data, final_url):
     :exception ValueError: if HTTP method is not supported
     """
     
-    if 'GET' == http_method.upper():
+    if 'GET' == http_method:
         return requests.get(final_url, params=data)
     
-    if 'POST' == http_method.upper():
+    if 'POST' == http_method:
         return requests.post(final_url, data=data)
 
     print(f'Method {http_method} is not supported. Check your input file')
@@ -316,7 +316,7 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, run_mode
             for payload in set(itertools.permutations(request['payloads'], len(request['parameters']))):
                 # if payload contains the command to find the number of columns and the run is set to sql mode 
                 if noc_command_in_payloads and 'sql' == run_mode:
-                    for pre_order_by_value in pre_order_by_values[:]: # loop over a copy of the list because elements can be removed
+                    for pre_order_by_value in pre_order_by_values:
                         data = prepare_data(request['parameters'], payload, f'{pre_order_by_value} ORDER BY {current_column_number} -- -')
                         response = send_request(request['method'], data, final_url)
 
@@ -338,7 +338,7 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, run_mode
                                     # confirmation needed
                                     end_loop = send_confirmation_request(request['parameters'][i], data[request['parameters'][i]], number_of_columns, request, payload, pre_order_by_value, vulnerabilities_lines)
                                     break
-                elif 'GET' == request['method'].upper() and COMMAND_XSS_INJECTION in request['payloads'] and 'xss' == run_mode:
+                elif 'GET' == request['method'] and COMMAND_XSS_INJECTION in request['payloads'] and 'xss' == run_mode:
                     for xss_injection in xss_injections:
                         data = prepare_data(request['parameters'], payload, xss_injection)
                         response = send_request(request['method'], data, final_url)
