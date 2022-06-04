@@ -12,7 +12,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.core.utils import ChromeType
 from bs4 import BeautifulSoup
@@ -277,6 +276,99 @@ def send_confirmation_request(vulnerable_parameter, injected_payload, number_of_
         
     return is_vulnerability_confirmed
 
+def xss_confirmation_in_body(response, parameter_value):
+    """
+    it confirms if the xss injection is printed inside the body.
+
+    :param response: HTTP response
+    :param parameter_value: injected payload
+    :return: True if the popup is printend inside the body, False otherwise
+    """
+
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    script_tags = soup.find_all('script')
+    
+    open_tag = '<script>'
+    open_tag_index = parameter_value.index(open_tag)
+    close_tag_index = parameter_value.index('</script>')
+
+    script_body = parameter_value[open_tag_index + len(open_tag) : close_tag_index]
+
+    unsafe_tag = None
+    unsafe_attr = None
+
+    # loop over script tags
+    for script_tag in script_tags:
+        if script_body == script_tag.string:
+            unsafe_tag = script_tag.parent
+
+            # if vulnerability seems to be directly in body (no tag, no attribute, etc)
+            if '[document]' == unsafe_tag.name:
+                unsafe_tag = script_tag.previous_element
+
+            # if the vulnerability is directly inside the body, unsafe_tag.name is None
+            if unsafe_tag.name:
+                # last attr is the injectable attr
+                unsafe_attr = list(unsafe_tag.attrs)[-1]
+
+            break
+
+    return (unsafe_tag, unsafe_attr)
+
+def xss_confirmation_in_browser(url, parameter_value):
+    """
+    it confirms if a specific alert popup is shown in the browser.
+
+    :param url: complete url
+    :param parameter_value: injected payload
+    :return: True if the popup is shown, False otherwise
+    """
+    
+    expected_alert_value = re.search('\((.*)\)', parameter_value).group(0)
+
+    # remove parenthesis
+    expected_alert_value = expected_alert_value[1:-1]
+
+    if expected_alert_value.startswith('\'') or expected_alert_value.startswith('"'):
+        expected_alert_value = expected_alert_value[1:] # removing extra char
+
+    if expected_alert_value.endswith('\'') or expected_alert_value.endswith('"'):
+        expected_alert_value = expected_alert_value[:-1] # removing extra char
+
+    options = Options()
+    options.add_experimental_option('detach', KEEP_BROWSER_OPEN)
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install()), options=options)
+
+    driver.get(url)
+
+    alert_found = False
+
+    # loop because other alerts may exist
+    while True:                               
+        try:
+            WebDriverWait(driver, MAX_ALERT_WAITING_TIME).until(EC.alert_is_present())
+            alert = driver.switch_to.alert
+
+            # if the text is the same
+            alert_found = alert.text == expected_alert_value
+
+            # close popup
+            alert.accept()
+            
+            if alert_found:
+                break
+        except TimeoutException:
+            if DEBUG:
+                print(f'[DEBUG] - ALERT NOT FOUND, PARAMETER VALUE: {parameter_value}')
+
+            break
+    
+    if not KEEP_BROWSER_OPEN:
+        driver.quit()
+
+    return alert_found
+
 def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, run_mode):
     """
     it prepares data and send an HTTP request for cmd and sql mode.
@@ -355,38 +447,10 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, run_mode
                                 continue
 
                             if is_parameter_vulnerable(data[request['parameters'][i]], request['url'][1:], response) == VulnerableResource.SEEMS_VULNERABLE:
-                                soup = BeautifulSoup(response.text, 'html.parser')
+                                unsafe_tag, unsafe_attr = xss_confirmation_in_body(response, data[request['parameters'][i]])
 
-                                script_tags = soup.find_all('script')
-                                
-                                open_tag = '<script>'
-                                open_tag_index = data[request['parameters'][i]].index(open_tag)
-                                close_tag_index = data[request['parameters'][i]].index('</script>')
-
-                                script_body = data[request['parameters'][i]][open_tag_index + len(open_tag) : close_tag_index]
-
-                                unsafe_tag = None
-                                unsafe_attr = None
-
-                                # loop over script tags
-                                for script_tag in script_tags:
-                                    if script_body == script_tag.string:
-                                        alert_found = True
-
-                                        unsafe_tag = script_tag.parent
-
-                                        # if vulnerability seems to be directly in body (no tag, no attribute, etc)
-                                        if '[document]' == unsafe_tag.name:
-                                            unsafe_tag = script_tag.previous_element
-
-                                        # if the vulnerability is directly inside the body, unsafe_tag.name is None
-                                        if unsafe_tag.name:
-                                            # last attr is the injectable attr
-                                            unsafe_attr = list(unsafe_tag.attrs)[-1]
-
-                                        break
-
-                                if alert_found:
+                                # if the xss injection exists in the response 
+                                if unsafe_tag:
                                     message = f'Found a xss injection for URL: {request["url"][1:]}, HTTP method: {request["method"]}, parameter: {request["parameters"][i]}, payload: {data[request["parameters"][i]]}'
                                     message += '. The injection was found '
 
@@ -395,51 +459,11 @@ def prepare_data_and_send_request(requests_dict, vulnerabilities_lines, run_mode
                                     else:
                                         message += 'directly inside the body'
 
-                                    options = Options()
-                                    options.add_experimental_option('detach', KEEP_BROWSER_OPEN)
-                                    driver = webdriver.Chrome(service=Service(ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install()), options=options)
+                                    alert_found = xss_confirmation_in_browser(response.url, data[request['parameters'][i]])
 
-                                    driver.get(response.url)
-
-                                    alert_found = False
-
-                                    parameter_alert_value = re.search('\((.*)\)', data[request['parameters'][i]]).group(0)
-
-                                    # remove parenthesis
-                                    parameter_alert_value = parameter_alert_value[1:-1]
-
-                                    if parameter_alert_value.startswith('\'') or parameter_alert_value.startswith('"'):
-                                        parameter_alert_value = parameter_alert_value[1:] # removing extra char
-
-                                    if parameter_alert_value.endswith('\'') or parameter_alert_value.endswith('"'):
-                                        parameter_alert_value = parameter_alert_value[:-1] # removing extra char
-
-                                    # loop because other alerts may exist
-                                    while True:                               
-                                        try:
-                                            WebDriverWait(driver, MAX_ALERT_WAITING_TIME).until(EC.alert_is_present())
-                                            alert = driver.switch_to.alert
-
-                                            # found text
-                                            if alert.text == parameter_alert_value:
-                                                print(message)
-                                                vulnerabilities_lines.append(f'{datetime.now()} - {message}')
-                                                
-                                                alert_found = True
-
-                                            # close popup
-                                            alert.accept()
-
-                                            if alert_found:
-                                                break
-                                        except TimeoutException:
-                                            if DEBUG:
-                                                print(f'[DEBUG] - ALERT NOT FOUND, PARAMETER VALUE: {data[request["parameters"][i]]}')
-
-                                            break
-                                    
-                                    if not KEEP_BROWSER_OPEN:
-                                        driver.quit()
+                                    if alert_found:
+                                        print(message)
+                                        vulnerabilities_lines.append(f'{datetime.now()} - {message}')
 
                         if alert_found:
                             break
